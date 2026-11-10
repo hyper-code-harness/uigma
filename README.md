@@ -83,7 +83,7 @@ name and set `uigma.editorUrl` (https when Hyper is https); `uigma.editorHost` s
   "label": "Uigma",
   "icon": "ph-bezier-curve",
   "description": "Design files and boards in a full Figma-like editor on the canvas (OpenPencil): frames, auto layout, components with variants, variables, stickies, connectors; .fig files; the agent edits the same open file.",
-  "source": "github:<owner>/uigma"
+  "source": "github:RomanPogorov/uigma"
 }
 ```
 

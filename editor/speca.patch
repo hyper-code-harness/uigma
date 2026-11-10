@@ -1,0 +1,1730 @@
+diff --git a/packages/core/src/canvas/overlays/quick-create.ts b/packages/core/src/canvas/overlays/quick-create.ts
+new file mode 100644
+index 0000000..a59499e
+--- /dev/null
++++ b/packages/core/src/canvas/overlays/quick-create.ts
+@@ -0,0 +1,93 @@
++import type { Canvas } from '@open-pencil/canvaskit'
++import type { SceneGraph } from '@open-pencil/scene-graph'
++import { getAxisAlignedWorldBounds } from '@open-pencil/scene-graph/coordinate'
++import type { Rect, Vector } from '@open-pencil/scene-graph/primitives'
++
++import type { RenderOverlays, SkiaRenderer } from '#core/canvas/renderer'
++import { quickCreateDots, quickCreatePlace } from '#core/editor/connectors/quick-create'
++
++import { dashEffect } from './outline'
++
++/** A dot at rest, and the one under the pointer with its plus, in screen pixels. */
++const DOT_RADIUS = 4.5
++const HOVERED_DOT_RADIUS = 11
++const PLUS_ARM = 5
++const GHOST_RADIUS = 6
++const GHOST_ALPHA = 0.55
++const GHOST_FILL_ALPHA = 0.06
++
++function toScreen(r: SkiaRenderer, point: Vector): Vector {
++  return { x: point.x * r.zoom + r.panX, y: point.y * r.zoom + r.panY }
++}
++
++/** Where the new block would go and the line that would join it, shown before the click. */
++function drawGhost(r: SkiaRenderer, canvas: Canvas, from: Rect, place: Rect) {
++  const topLeft = toScreen(r, place)
++  const rect = r.ck.XYWHRect(topLeft.x, topLeft.y, place.width * r.zoom, place.height * r.zoom)
++  const rounded = r.ck.RRectXY(rect, GHOST_RADIUS, GHOST_RADIUS)
++  r.auxFill.setMaskFilter(null)
++  r.auxFill.setColor(r.selColor(GHOST_FILL_ALPHA))
++  canvas.drawRRect(rounded, r.auxFill)
++  r.auxStroke.setStrokeWidth(1.5)
++  r.auxStroke.setColor(r.selColor(GHOST_ALPHA))
++  r.auxStroke.setPathEffect(dashEffect(r, 5, 4))
++  canvas.drawRRect(rounded, r.auxStroke)
++  // The line leaves the middle of the block's box and stops at the new one's, clipped to the gap
++  // between them along the axis they are apart on.
++  const a = toScreen(r, { x: from.x + from.width / 2, y: from.y + from.height / 2 })
++  const b = toScreen(r, { x: place.x + place.width / 2, y: place.y + place.height / 2 })
++  const halfA = { x: (from.width * r.zoom) / 2, y: (from.height * r.zoom) / 2 }
++  const halfB = { x: (place.width * r.zoom) / 2, y: (place.height * r.zoom) / 2 }
++  const dx = b.x - a.x
++  const dy = b.y - a.y
++  const horizontal = Math.abs(dx) - halfA.x - halfB.x >= Math.abs(dy) - halfA.y - halfB.y
++  if (horizontal) {
++    const sign = Math.sign(dx) || 1
++    canvas.drawLine(a.x + sign * halfA.x, a.y, b.x - sign * halfB.x, b.y, r.auxStroke)
++  } else {
++    const sign = Math.sign(dy) || 1
++    canvas.drawLine(a.x, a.y + sign * halfA.y, b.x, b.y - sign * halfB.y, r.auxStroke)
++  }
++  r.auxStroke.setPathEffect(null)
++}
++
++/**
++ * The quick-create dots off the sides of the selected block of a board, as FigJam shows them; the
++ * one under the pointer grows a plus and shows where its block would go.
++ */
++export function drawQuickCreateDots(
++  r: SkiaRenderer,
++  canvas: Canvas,
++  graph: SceneGraph,
++  quickCreate: RenderOverlays['quickCreate']
++) {
++  const node = quickCreate ? graph.getNode(quickCreate.nodeId) : undefined
++  if (!quickCreate || !node) return
++  if (quickCreate.hover) {
++    drawGhost(
++      r,
++      canvas,
++      getAxisAlignedWorldBounds(node, graph),
++      quickCreatePlace(graph, node, quickCreate.hover)
++    )
++  }
++  r.auxFill.setMaskFilter(null)
++  r.auxStroke.setPathEffect(null)
++  for (const dot of quickCreateDots(graph, node, r.zoom)) {
++    const at = toScreen(r, dot)
++    if (dot.side === quickCreate.hover) {
++      r.auxFill.setColor(r.selColor())
++      canvas.drawCircle(at.x, at.y, HOVERED_DOT_RADIUS, r.auxFill)
++      r.auxStroke.setStrokeWidth(2)
++      r.auxStroke.setColor(r.selForegroundColor())
++      canvas.drawLine(at.x - PLUS_ARM, at.y, at.x + PLUS_ARM, at.y, r.auxStroke)
++      canvas.drawLine(at.x, at.y - PLUS_ARM, at.x, at.y + PLUS_ARM, r.auxStroke)
++      continue
++    }
++    r.auxFill.setColor(r.ck.WHITE)
++    canvas.drawCircle(at.x, at.y, DOT_RADIUS, r.auxFill)
++    r.auxStroke.setStrokeWidth(1.5)
++    r.auxStroke.setColor(r.selColor())
++    canvas.drawCircle(at.x, at.y, DOT_RADIUS, r.auxStroke)
++  }
++}
+diff --git a/packages/core/src/canvas/overlays/selection.ts b/packages/core/src/canvas/overlays/selection.ts
+index 9dbcf51..eabc932 100644
+--- a/packages/core/src/canvas/overlays/selection.ts
++++ b/packages/core/src/canvas/overlays/selection.ts
+@@ -116,8 +116,11 @@ function drawSingleSelection(
+     drawTextPathSelection(r, canvas, node, rotation, graph, editing, preview)
+     if (!editing) drawSelectionLabels(r, canvas, graph, selectedIds, overlays)
+   } else {
+-    drawNodeSelection(r, canvas, node, rotation, graph, preview)
+-    drawSelectionLabels(r, canvas, graph, selectedIds, overlays)
++    // A block with quick-create dots keeps its top and bottom free for them, as FigJam's does: no
++    // rotation stalk (its corners still turn it) and, until it is resized, no size badge.
++    const dots = overlays.quickCreate?.nodeId === id && !overlays.transforming
++    drawNodeSelection(r, canvas, node, rotation, graph, preview, !dots)
++    if (!dots) drawSelectionLabels(r, canvas, graph, selectedIds, overlays)
+   }
+   r.selectionPaint.setColor(r.selColor())
+ }
+@@ -332,7 +335,8 @@ export function drawNodeSelection(
+   node: SceneNode,
+   rotation: number,
+   graph: SceneGraph,
+-  preview?: RotationPreview | null
++  preview?: RotationPreview | null,
++  rotationStalk = true
+ ): void {
+   drawSelectionRect(
+     r,
+@@ -349,7 +353,7 @@ export function drawNodeSelection(
+         x2,
+         y2,
+         // A generated frame such as a sticky note may stay upright, and a line turns by its ends.
+-        !layerRotates(node) || isLineLike(node)
++        !rotationStalk || !layerRotates(node) || isLineLike(node)
+           ? null
+           : rotationHandleLayout(node, r.sceneGeometry(graph, preview), r.zoom, {
+               x: x1,
+diff --git a/packages/core/src/canvas/renderer/overlay-pass.ts b/packages/core/src/canvas/renderer/overlay-pass.ts
+index 5972daf..b2654ef 100644
+--- a/packages/core/src/canvas/renderer/overlay-pass.ts
++++ b/packages/core/src/canvas/renderer/overlay-pass.ts
+@@ -27,6 +27,7 @@ import { drawGradientHandles } from '#core/canvas/overlays/gradient-handles'
+ import { drawLayoutOutlines } from '#core/canvas/overlays/layout-outlines'
+ import { drawMeasurementSegment } from '#core/canvas/overlays/measurement'
+ import { drawPixelGrid } from '#core/canvas/overlays/pixel-grid'
++import { drawQuickCreateDots } from '#core/canvas/overlays/quick-create'
+ import { drawCodeFocus } from '#core/canvas/overlays/selection'
+ import { drawShapeHandles } from '#core/canvas/overlays/shape-handles'
+ import { drawSlotOutlines } from '#core/canvas/overlays/slots'
+@@ -159,6 +160,8 @@ export function drawOverlayPass(
+         overlays.shapeHandleHover,
+         overlays.rotationPreview
+       )
++    if (!measuring && !overlays.transforming && r.editHandles)
++      drawQuickCreateDots(r, canvas, graph, overlays.quickCreate)
+   }
+   if (measuring) drawMeasurements(r, canvas, graph, selectedIds, overlays.hoveredNodeId)
+   r.profiler.endPhase('render:selection')
+diff --git a/packages/core/src/canvas/renderer/pipeline.ts b/packages/core/src/canvas/renderer/pipeline.ts
+index 1b9172b..936eced 100644
+--- a/packages/core/src/canvas/renderer/pipeline.ts
++++ b/packages/core/src/canvas/renderer/pipeline.ts
+@@ -4,6 +4,7 @@ import type { SceneGraph } from '@open-pencil/scene-graph'
+ import { needsImagePreviews } from '#core/canvas/images/previews'
+ import { paintPageBackground } from '#core/canvas/page/background'
+ import type { RenderOverlays, SkiaRenderer } from '#core/canvas/renderer'
++import { quickCreateOverlay } from '#core/editor/connectors/quick-create'
+ import { playIslandRoots } from '#core/editor/play/islands'
+ import type { EditorState } from '#core/editor/types'
+ import { resolveEditorProfile } from '#core/editor/views/profile'
+@@ -141,7 +142,8 @@ export function renderFromEditorState(
+       codeFocusNodeId: state.codeFocusNodeId,
+       autoLayoutHover: state.autoLayoutHover,
+       shapeHandleHover: state.shapeHandleHover,
+-      connectorTarget: state.connectorTarget
++      connectorTarget: state.connectorTarget,
++      quickCreate: quickCreateOverlay(graph, state)
+     },
+     // Recorded pictures follow what the canvas draws, not every document change.
+     state.canvasVersion,
+diff --git a/packages/core/src/canvas/renderer/types.ts b/packages/core/src/canvas/renderer/types.ts
+index 65c9352..291b59f 100644
+--- a/packages/core/src/canvas/renderer/types.ts
++++ b/packages/core/src/canvas/renderer/types.ts
+@@ -5,6 +5,7 @@ import type { GuideOverlayState } from '#core/canvas/guides/types'
+ import type { DesignIssueOverlay } from '#core/canvas/issues/types'
+ import type { NodeEditOverlayState } from '#core/canvas/node-edit-overlay'
+ import type { ConnectorTarget } from '#core/editor/connectors/attach'
++import type { QuickCreateSide } from '#core/editor/connectors/quick-create'
+ import type { ShapeHandleHover, GradientEdit, PencilState } from '#core/editor/types'
+ import type { RotationPreview } from '#core/geometry'
+ import type { TextEditor } from '#core/text/editor'
+@@ -76,6 +77,8 @@ export interface RenderOverlays {
+   shapeHandleHover?: ShapeHandleHover | null
+   /** The layer a connector end would attach to, outlined with its magnets. */
+   connectorTarget?: ConnectorTarget | null
++  /** The block whose quick-create dots show, and the dot under the pointer. */
++  quickCreate?: { nodeId: string; hover: QuickCreateSide | null } | null
+   penState?: {
+     vertices: Vector[]
+     segments: Array<{
+diff --git a/packages/core/src/editor/clipboard.ts b/packages/core/src/editor/clipboard.ts
+index f79c4e0..e5efdf8 100644
+--- a/packages/core/src/editor/clipboard.ts
++++ b/packages/core/src/editor/clipboard.ts
+@@ -103,7 +103,12 @@ export function createClipboardActions(ctx: EditorContext) {
+     const stack = () => {
+       for (const { id, parentId, index } of stacking) ctx.graph.insertChildAt(id, parentId, index)
+     }
++    // A copy lands on its original: a parent with auto layout has to place it, as it does after a delete.
++    const relayoutParents = () => {
++      for (const parentId of new Set(parents)) ctx.runLayoutForNode(parentId)
++    }
+     stack()
++    relayoutParents()
+ 
+     if (newRootIds.length > 0) {
+       ctx.setSelectedIds(new Set(newRootIds))
+@@ -117,10 +122,12 @@ export function createClipboardActions(ctx: EditorContext) {
+             restoreSubtree(ctx.graph, snapshot, parentId, allSnapshots)
+           }
+           stack()
++          relayoutParents()
+           ctx.setSelectedIds(new Set(newRootIds))
+         },
+         inverse: () => {
+           for (const id of newRootIds.slice().reverse()) ctx.graph.deleteNode(id)
++          relayoutParents()
+           ctx.setSelectedIds(prevSelection)
+         }
+       })
+diff --git a/packages/core/src/editor/connectors/draw.ts b/packages/core/src/editor/connectors/draw.ts
+index 6e20a01..8d0d0f4 100644
+--- a/packages/core/src/editor/connectors/draw.ts
++++ b/packages/core/src/editor/connectors/draw.ts
+@@ -59,6 +59,17 @@ export function createConnectorDrawActions(ctx: EditorContext) {
+     }
+   }
+ 
++  /** Starts a connector joined to `nodeId` by `magnet`, as a drag from a quick-create dot does. */
++  function connectorBeginFrom(nodeId: string, magnet: ConnectorEndpoint['magnet'] = 'AUTO') {
++    if (draft) return
++    draft = {
++      start: { nodeId, magnet, position: { x: 0, y: 0 } },
++      connectorId: null,
++      previousSelection: new Set(ctx.state.selectedIds),
++      clicked: false
++    }
++  }
++
+   function connectorDrag(x: number, y: number, modifiers: AttachModifiers = {}) {
+     if (!draft) return
+     const { endpoint, target } = attach({ x, y }, modifiers, draft.connectorId ?? undefined)
+@@ -85,22 +96,28 @@ export function createConnectorDrawActions(ctx: EditorContext) {
+ 
+   /**
+    * Ends the connector at `point`. A release where the press was, with nothing drawn yet, leaves
+-   * the start waiting for a second click.
++   * the start waiting for a second click. Returns the connector made, if one was.
+    */
+-  function connectorRelease(x: number, y: number, moved: boolean, modifiers: AttachModifiers = {}) {
+-    if (!draft) return
++  function connectorRelease(
++    x: number,
++    y: number,
++    moved: boolean,
++    modifiers: AttachModifiers = {}
++  ): string | null {
++    if (!draft) return null
+     if (!draft.connectorId && !moved && !draft.clicked) {
+       draft.clicked = true
+-      return
++      return null
+     }
+     connectorDrag(x, y, modifiers)
+     const { connectorId, previousSelection } = draft
+     draft = null
+     setTarget(null)
+-    if (!connectorId || !ctx.graph.getNode(connectorId)) return
++    if (!connectorId || !ctx.graph.getNode(connectorId)) return null
+     pushCreatedSubtreesUndo(ctx, 'Create connector', [connectorId], previousSelection)
+     ctx.setSelectedIds(new Set())
+     ctx.requestRender()
++    return connectorId
+   }
+ 
+   function connectorCancel() {
+@@ -120,7 +137,14 @@ export function createConnectorDrawActions(ctx: EditorContext) {
+     if (draft) connectorCancel()
+   })
+ 
+-  return { connectorHover, connectorBegin, connectorDrag, connectorRelease, connectorCancel }
++  return {
++    connectorHover,
++    connectorBegin,
++    connectorBeginFrom,
++    connectorDrag,
++    connectorRelease,
++    connectorCancel
++  }
+ }
+ 
+ type BeginNodePreview = (label?: string) => NodePreview
+diff --git a/packages/core/src/editor/connectors/quick-create.ts b/packages/core/src/editor/connectors/quick-create.ts
+new file mode 100644
+index 0000000..eb72c82
+--- /dev/null
++++ b/packages/core/src/editor/connectors/quick-create.ts
+@@ -0,0 +1,253 @@
++import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
++import { boundEndpoint, createConnector } from '@open-pencil/scene-graph/connectors'
++import {
++  getAbsolutePosition,
++  getAxisAlignedWorldBounds,
++  getParentWorldMatrix
++} from '@open-pencil/scene-graph/coordinate'
++import { generatedFrameOwner, generatedFrameText } from '@open-pencil/scene-graph/generated'
++import Matrix from '@open-pencil/scene-graph/matrix'
++import type { Rect, Vector } from '@open-pencil/scene-graph/primitives'
++
++import { duplicateNode } from '#core/editor/clipboard'
++import type { EditorContext, EditorState } from '#core/editor/types'
++import { pushCreatedSubtreesUndo } from '#core/editor/undo'
++import { resolveEditorProfile } from '#core/editor/views/profile'
++import type { EditorProfileInputs } from '#core/editor/views/types'
++
++/**
++ * Quick create, as FigJam's: a selected block on a board shows a dot off each of its sides; a click
++ * on one puts a copy of the block that way, joined to it by a connector, and a drag from one draws
++ * a connector from that side.
++ */
++
++export type QuickCreateSide = 'TOP' | 'RIGHT' | 'BOTTOM' | 'LEFT'
++
++export const QUICK_CREATE_SIDES: readonly QuickCreateSide[] = ['TOP', 'RIGHT', 'BOTTOM', 'LEFT']
++
++/** How far off a side its dot sits, and how close a pointer takes it, in screen pixels. */
++export const QUICK_CREATE_DOT_OFFSET = 20
++export const QUICK_CREATE_HIT_RADIUS = 12
++/** A block smaller than this on screen shows no dots: they would sit on one another. */
++const QUICK_CREATE_MIN_SCREEN_SIZE = 28
++/** The space left between a block and the one made from it, and between two made the same way. */
++const QUICK_CREATE_GAP = 96
++const QUICK_CREATE_STACK_GAP = 40
++const MAX_PLACES_TRIED = 60
++
++/** Layers that are not blocks of a diagram: lines, containers of blocks, and bare text. */
++const NOT_BLOCKS: ReadonlySet<SceneNode['type']> = new Set([
++  'CONNECTOR',
++  'SECTION',
++  'LINE',
++  'TEXT',
++  'CANVAS',
++  'DOCUMENT'
++] as Array<SceneNode['type']>)
++
++const OUTWARD: Record<QuickCreateSide, Vector> = {
++  TOP: { x: 0, y: -1 },
++  RIGHT: { x: 1, y: 0 },
++  BOTTOM: { x: 0, y: 1 },
++  LEFT: { x: -1, y: 0 }
++}
++
++type QuickCreateState = EditorProfileInputs &
++  Pick<EditorState, 'activeTool' | 'selectedIds' | 'nodeEditState' | 'penState' | 'zoom'>
++
++function lockedInTree(graph: SceneGraph, node: SceneNode): boolean {
++  return graph.closest(node.id, (ancestor) => ancestor.locked) !== undefined
++}
++
++/** The block quick create starts from: the only selected layer of a board, when it is a block. */
++export function quickCreateSource(graph: SceneGraph, state: QuickCreateState): SceneNode | null {
++  if (state.documentKind !== 'board' || state.activeTool !== 'SELECT') return null
++  if (state.selectedIds.size !== 1 || state.nodeEditState || state.penState) return null
++  if (resolveEditorProfile(state).layerEdits !== 'all') return null
++  const [id] = state.selectedIds
++  const node = graph.getNode(id)
++  if (!node || NOT_BLOCKS.has(node.type) || !node.visible) return null
++  if (lockedInTree(graph, node) || generatedFrameOwner(graph, node)) return null
++  const parent = node.parentId ? graph.getNode(node.parentId) : undefined
++  // A block in an auto layout sits where the layout puts it, so there is no side to grow from.
++  if (!parent || (parent.layoutMode !== 'NONE' && node.layoutPositioning !== 'ABSOLUTE')) return null
++  const box = getAxisAlignedWorldBounds(node, graph)
++  if (Math.min(box.width, box.height) * state.zoom < QUICK_CREATE_MIN_SCREEN_SIZE) return null
++  return node
++}
++
++/** What the canvas draws of quick create: the block with dots, and the dot under the pointer. */
++export function quickCreateOverlay(
++  graph: SceneGraph,
++  state: QuickCreateState & Pick<EditorState, 'quickCreateHover'>
++): { nodeId: string; hover: QuickCreateSide | null } | null {
++  const node = quickCreateSource(graph, state)
++  return node ? { nodeId: node.id, hover: state.quickCreateHover } : null
++}
++
++/** Where each side's dot sits, in page coordinates, at `zoom`. */
++export function quickCreateDots(
++  graph: SceneGraph,
++  node: SceneNode,
++  zoom: number
++): Array<{ side: QuickCreateSide; x: number; y: number }> {
++  const box = getAxisAlignedWorldBounds(node, graph)
++  const cx = box.x + box.width / 2
++  const cy = box.y + box.height / 2
++  const off = QUICK_CREATE_DOT_OFFSET / zoom
++  return [
++    { side: 'TOP', x: cx, y: box.y - off },
++    { side: 'RIGHT', x: box.x + box.width + off, y: cy },
++    { side: 'BOTTOM', x: cx, y: box.y + box.height + off },
++    { side: 'LEFT', x: box.x - off, y: cy }
++  ]
++}
++
++function intersects(a: Rect, b: Rect): boolean {
++  return (
++    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
++  )
++}
++
++function contains(outer: Rect, inner: Rect): boolean {
++  return (
++    inner.x >= outer.x &&
++    inner.y >= outer.y &&
++    inner.x + inner.width <= outer.x + outer.width &&
++    inner.y + inner.height <= outer.y + outer.height
++  )
++}
++
++/** The boxes a new block must not cover: every block of the page, inside its sections too. */
++function blocksOfPage(graph: SceneGraph, pageId: string, source: SceneNode): Rect[] {
++  const boxes: Rect[] = []
++  const walk = (parentId: string) => {
++    for (const child of graph.getChildren(parentId)) {
++      if (child.type === 'CONNECTOR' || !child.visible) continue
++      // A section, or whatever holds the source, is where blocks sit, not one of them.
++      const holdsBlocks =
++        child.type === 'SECTION' || (child.id !== source.id && graph.isDescendant(source.id, child.id))
++      if (holdsBlocks) {
++        walk(child.id)
++        continue
++      }
++      boxes.push(getAxisAlignedWorldBounds(child, graph))
++    }
++  }
++  walk(pageId)
++  return boxes
++}
++
++/**
++ * Where the block made from `node` on `side` goes, in page coordinates: a gap away that way, and
++ * past the blocks already there, as FigJam fans out the second and third block made from a side.
++ */
++export function quickCreatePlace(graph: SceneGraph, node: SceneNode, side: QuickCreateSide): Rect {
++  const from = getAxisAlignedWorldBounds(node, graph)
++  const out = OUTWARD[side]
++  const place = {
++    x: from.x + out.x * (from.width + QUICK_CREATE_GAP),
++    y: from.y + out.y * (from.height + QUICK_CREATE_GAP),
++    width: from.width,
++    height: from.height
++  }
++  const pageId = graph.pageOf(node.id)
++  if (!pageId) return place
++  const taken = blocksOfPage(graph, pageId, node)
++  // Blocks made to the left or right stack downwards; ones made above or below stack rightwards.
++  const step =
++    out.x !== 0
++      ? { x: 0, y: from.height + QUICK_CREATE_STACK_GAP }
++      : { x: from.width + QUICK_CREATE_STACK_GAP, y: 0 }
++  for (let tries = 0; tries < MAX_PLACES_TRIED; tries++) {
++    if (!taken.some((box) => intersects(box, place))) break
++    place.x += step.x
++    place.y += step.y
++  }
++  return place
++}
++
++/** The container the new block goes into: the nearest one around the source that holds `place`. */
++function parentHolding(graph: SceneGraph, node: SceneNode, place: Rect, pageId: string): string {
++  let parentId = node.parentId
++  while (parentId && parentId !== pageId) {
++    const parent = graph.getNode(parentId)
++    if (!parent) break
++    if (contains(getAxisAlignedWorldBounds(parent, graph), place)) return parent.id
++    parentId = parent.parentId
++  }
++  return pageId
++}
++
++export function createQuickCreateActions(ctx: EditorContext) {
++  function quickCreateNode(): SceneNode | null {
++    return quickCreateSource(ctx.graph, ctx.state)
++  }
++
++  /** The side whose dot is under the point, in page coordinates. */
++  function quickCreateSideAt(x: number, y: number): QuickCreateSide | null {
++    const node = quickCreateNode()
++    if (!node) return null
++    const reach = QUICK_CREATE_HIT_RADIUS / ctx.state.zoom
++    const dot = quickCreateDots(ctx.graph, node, ctx.state.zoom).find(
++      (candidate) => Math.hypot(candidate.x - x, candidate.y - y) <= reach
++    )
++    return dot?.side ?? null
++  }
++
++  function setQuickCreateHover(side: QuickCreateSide | null) {
++    if (ctx.state.quickCreateHover === side) return
++    ctx.state.quickCreateHover = side
++    ctx.requestRepaint()
++  }
++
++  /**
++   * Puts a copy of the selected block on `side` of it, joined to it by a connector, and selects
++   * the copy: one undo step. A sticky note or a shape starts empty, as a new one; the text layer
++   * to type into is returned with it, and the box the copy took, in page coordinates.
++   */
++  function quickCreateFrom(
++    side: QuickCreateSide
++  ): { node: SceneNode; text: SceneNode | null; place: Rect } | null {
++    const source = quickCreateNode()
++    const graph = ctx.graph
++    const pageId = source ? graph.pageOf(source.id) : null
++    if (!source || !pageId) return null
++    const previousSelection = new Set(ctx.state.selectedIds)
++    const from = getAxisAlignedWorldBounds(source, graph)
++    const place = quickCreatePlace(graph, source, side)
++    const parentId = parentHolding(graph, source, place, pageId)
++    // The copy keeps the source's turn and size, so its origin moves as its box does.
++    const origin = getAbsolutePosition(source, graph)
++    const toParent =
++      Matrix.invert(getParentWorldMatrix(graph.getNode(parentId), graph)) ?? Matrix.identity()
++    const [x, y] = Matrix.mapPoints(toParent, [
++      origin.x + place.x - from.x,
++      origin.y + place.y - from.y
++    ])
++    const copy = duplicateNode(ctx, source, parentId, { x: Math.round(x), y: Math.round(y) })
++    if (!copy) return null
++    const text = generatedFrameText(graph, copy) ?? null
++    if (text) graph.updateNode(text.id, { text: '', styleRuns: [], textParagraphs: [] })
++    ctx.runLayoutForNode(copy.id)
++    const connector = createConnector(graph, pageId, {
++      start: boundEndpoint(source.id),
++      end: boundEndpoint(copy.id),
++      startCap: 'NONE',
++      endCap: 'ARROW_LINES'
++    })
++    ctx.runLayoutForNode(connector.id)
++
++    pushCreatedSubtreesUndo(ctx, 'Add connected block', [copy.id, connector.id], previousSelection)
++    ctx.state.quickCreateHover = null
++    ctx.setSelectedIds(new Set([copy.id]))
++    ctx.requestRender()
++    return {
++      node: graph.getNode(copy.id) ?? copy,
++      text: text ? (graph.getNode(text.id) ?? text) : null,
++      place
++    }
++  }
++
++  return { quickCreateNode, quickCreateSideAt, setQuickCreateHover, quickCreateFrom }
++}
+diff --git a/packages/core/src/editor/create.ts b/packages/core/src/editor/create.ts
+index d1bc478..570dd60 100644
+--- a/packages/core/src/editor/create.ts
++++ b/packages/core/src/editor/create.ts
+@@ -38,6 +38,7 @@ import { createColorSpaceActions } from './color-space'
+ import { createComponentActions } from './components'
+ import { createComponentSyncScheduler } from './components/sync'
+ import { createConnectorDrawActions, createConnectorEndpointActions } from './connectors/draw'
++import { createQuickCreateActions } from './connectors/quick-create'
+ import { createConnectorLineActions } from './connectors/line'
+ import { createConnectorRouting } from './connectors/routing'
+ import { createConnectorStyleActions } from './connectors/style'
+@@ -351,6 +352,7 @@ export function createEditor(options?: EditorOptions) {
+   const figCompression = createFigCompressionActions(ctx)
+   createConnectorRouting(ctx)
+   const connectorDrawing = createConnectorDrawActions(ctx)
++  const quickCreate = createQuickCreateActions(ctx)
+   const connectorEndpoints = createConnectorEndpointActions(
+     ctx,
+     nodes.beginNodePreview,
+@@ -622,6 +624,7 @@ export function createEditor(options?: EditorOptions) {
+     setStatus: statuses.setStatus,
+     setStatusWorkflow: statuses.setStatusWorkflow,
+     ...connectorDrawing,
++    ...quickCreate,
+     ...connectorEndpoints,
+     ...connectorLines,
+     ...lineEnds,
+diff --git a/packages/core/src/editor/state/view.ts b/packages/core/src/editor/state/view.ts
+index 752f6b2..ace4f4b 100644
+--- a/packages/core/src/editor/state/view.ts
++++ b/packages/core/src/editor/state/view.ts
+@@ -25,6 +25,7 @@ export function createDefaultEditorViewState(pageId: string): EditorViewState {
+     autoLayoutHover: null,
+     shapeHandleHover: null,
+     connectorTarget: null,
++    quickCreateHover: null,
+     panX: 0,
+     pageColor: { ...CANVAS_BG_COLOR },
+     panY: 0,
+@@ -55,6 +56,7 @@ export function copyEditorViewState(source: EditorViewState): EditorViewState {
+     autoLayoutHover: structuredClone(source.autoLayoutHover),
+     shapeHandleHover: structuredClone(source.shapeHandleHover),
+     connectorTarget: structuredClone(source.connectorTarget),
++    quickCreateHover: null,
+     pageColor: { ...source.pageColor },
+     navigation: { ...source.navigation },
+     nodeEditState: structuredClone(source.nodeEditState),
+diff --git a/packages/core/src/editor/types.ts b/packages/core/src/editor/types.ts
+index c67920b..9137824 100644
+--- a/packages/core/src/editor/types.ts
++++ b/packages/core/src/editor/types.ts
+@@ -21,6 +21,7 @@ import type { RulerTheme, SkiaRenderer } from '#core/canvas/renderer'
+ import type { MeasurementMode, PresenceCursor, SelectionTheme } from '#core/canvas/renderer/types'
+ import type { InterfaceTheme } from '#core/constants'
+ import type { ConnectorTarget } from '#core/editor/connectors/attach'
++import type { QuickCreateSide } from '#core/editor/connectors/quick-create'
+ import type { DecidedMove } from '#core/editor/move-policy'
+ import type { SnappingPreferences } from '#core/editor/preferences'
+ import type { ShaderRasterizer } from '#core/editor/shaders/types'
+@@ -189,6 +190,8 @@ export interface EditorViewState {
+   shapeHandleHover: ShapeHandleHover | null
+   /** The layer a connector end being drawn or dragged would attach to, and by which magnet. */
+   connectorTarget: ConnectorTarget | null
++  /** The quick-create dot of the selected block under the pointer. */
++  quickCreateHover: QuickCreateSide | null
+   panX: number
+   pageColor: Color
+   panY: number
+diff --git a/packages/scene-graph/src/graph.ts b/packages/scene-graph/src/graph.ts
+index 0d23b13..e1ad09a 100644
+--- a/packages/scene-graph/src/graph.ts
++++ b/packages/scene-graph/src/graph.ts
+@@ -860,6 +860,15 @@ export class SceneGraph {
+     // A copy is a new design nobody has reviewed: Figma's duplicate and clone() drop the status.
+     props.status = null
+     const clone = this.createNode(src.type, parentId, { ...props, ...overrides })
++    // What a copy is given in place of its source's values is an edit of it: a layer read from a
++    // .fig is saved with the transform it was read with until its position is edited, so a copy
++    // put elsewhere came back on top of its source when the file was opened again.
++    markSourceFieldsEdited(
++      clone,
++      Object.keys(overrides).filter(
++        (key) => overrides[key as keyof SceneNode] !== src[key as keyof SceneNode]
++      )
++    )
+     Variables.copyAppliedBoundPaints(src, clone)
+     if (src.status) markSourceFieldsEdited(clone, ['status'])
+     ids.set(src.id, clone.id)
+diff --git a/packages/vue/src/canvas/useCanvasInput.ts b/packages/vue/src/canvas/useCanvasInput.ts
+index a55eebc..0020c1b 100644
+--- a/packages/vue/src/canvas/useCanvasInput.ts
++++ b/packages/vue/src/canvas/useCanvasInput.ts
+@@ -585,6 +585,7 @@ export function useCanvasInput(
+       editor.setHoveredNode(null)
+       editor.setHoveredGuide(null)
+       editor.setShapeHandleHover(null)
++      editor.setQuickCreateHover(null)
+     }
+   })
+   useEventListener(
+diff --git a/packages/vue/src/shared/input/connector/quick-create.ts b/packages/vue/src/shared/input/connector/quick-create.ts
+new file mode 100644
+index 0000000..0a7e0e7
+--- /dev/null
++++ b/packages/vue/src/shared/input/connector/quick-create.ts
+@@ -0,0 +1,79 @@
++import { resolveEditorProfile, type Editor } from '@open-pencil/core'
++
++import type { DragConnectorDraw, DragState } from '#vue/shared/input/types'
++
++/**
++ * The quick-create dot under the pointer, shown as hovered; none where layers are not edited. The
++ * select tool asks before its other handles, so a dot takes the pointer where it shows.
++ */
++export function hoverQuickCreate(editor: Editor, cx: number, cy: number): boolean {
++  if (resolveEditorProfile(editor.state).layerEdits !== 'all') return false
++  const side = editor.quickCreateSideAt(cx, cy)
++  editor.setQuickCreateHover(side)
++  return side !== null
++}
++
++/** The room kept between a new block and the edge of the canvas, in screen pixels. */
++const VIEW_MARGIN = 64
++
++/** Pans just as far as the new block needs to be on screen, so a chain grows past the edge. */
++function bringIntoView(editor: Editor, place: { x: number; y: number; width: number; height: number }) {
++  const { width, height } = editor.getViewportSize()
++  const { zoom, panX, panY } = editor.state
++  const left = place.x * zoom + panX
++  const top = place.y * zoom + panY
++  const right = left + place.width * zoom
++  const bottom = top + place.height * zoom
++  const shift = (start: number, end: number, size: number) => {
++    if (end - start > size - VIEW_MARGIN * 2) return 0
++    if (start < VIEW_MARGIN) return VIEW_MARGIN - start
++    return end > size - VIEW_MARGIN ? size - VIEW_MARGIN - end : 0
++  }
++  const dx = shift(left, right, width)
++  const dy = shift(top, bottom, height)
++  if (dx !== 0 || dy !== 0) editor.pan(dx, dy)
++}
++
++/**
++ * A press on a quick-create dot, as FigJam takes it: a click puts a block that way, joined by a
++ * connector, and starts typing in it; a drag draws a connector from that side of the block.
++ */
++export function tryStartQuickCreate(
++  editor: Editor,
++  cx: number,
++  cy: number,
++  sx: number,
++  sy: number,
++  setDrag: (drag: DragState) => void
++): boolean {
++  const side = editor.quickCreateSideAt(cx, cy)
++  const source = side ? editor.quickCreateNode() : null
++  if (!side || !source) return false
++  editor.setQuickCreateHover(null)
++  editor.connectorBeginFrom(source.id, side)
++  const drag: DragConnectorDraw = {
++    type: 'connector-draw',
++    startSX: sx,
++    startSY: sy,
++    moved: false,
++    x: cx,
++    y: cy,
++    modifiers: {},
++    commit: () => {
++      if (drag.moved) {
++        // The select tool keeps what was just drawn in hand, to label it or take it back.
++        const connectorId = editor.connectorRelease(drag.x, drag.y, true, drag.modifiers)
++        if (connectorId) editor.select([connectorId])
++        return
++      }
++      editor.connectorCancel()
++      const made = editor.quickCreateFrom(side)
++      if (!made) return
++      bringIntoView(editor, made.place)
++      if (made.text) editor.startTextEditing(made.text.id)
++    },
++    cancel: () => editor.connectorCancel()
++  }
++  setDrag(drag)
++  return true
++}
+diff --git a/packages/vue/src/shared/input/select.ts b/packages/vue/src/shared/input/select.ts
+index fe44bbb..a99af70 100644
+--- a/packages/vue/src/shared/input/select.ts
++++ b/packages/vue/src/shared/input/select.ts
+@@ -7,6 +7,7 @@ import type { SceneNode } from '@open-pencil/scene-graph'
+ 
+ import { tryStartConnectorEndDrag } from '#vue/shared/input/connector/end'
+ import { tryStartConnectorLineDrag } from '#vue/shared/input/connector/line'
++import { tryStartQuickCreate } from '#vue/shared/input/connector/quick-create'
+ import { tryStartGradientDrag } from '#vue/shared/input/gradient'
+ import { tryStartLineEndDrag } from '#vue/shared/input/line/end'
+ import { tryStartResize } from '#vue/shared/input/resize'
+@@ -60,6 +61,7 @@ function tryStartHandleDrag(
+   if (tryStartGradientDrag(editor, sx, sy, setDrag)) return true
+   // An open gradient's handles replace the layer's selection handles, which then do not respond.
+   if (editedGradient(editor.graph, editor.state.gradientEdit)) return false
++  if (tryStartQuickCreate(editor, cx, cy, sx, sy, setDrag)) return true
+   if (tryStartShapeHandleDrag(editor, sx, sy, altKey, setDrag)) return true
+   if (tryStartConnectorEndDrag(editor, sx, sy, setDrag)) return true
+   if (tryStartConnectorLineDrag(editor, cx, cy, sx, sy, setDrag)) return true
+diff --git a/packages/vue/src/shared/input/select/hover.ts b/packages/vue/src/shared/input/select/hover.ts
+index 307782d..1f8e46e 100644
+--- a/packages/vue/src/shared/input/select/hover.ts
++++ b/packages/vue/src/shared/input/select/hover.ts
+@@ -2,6 +2,7 @@ import { resolveEditorProfile, type Editor } from '@open-pencil/core'
+ import { layerResizes, layerRotates } from '@open-pencil/scene-graph/generated'
+ 
+ import { connectorLineCursor } from '#vue/shared/input/connector/line'
++import { hoverQuickCreate } from '#vue/shared/input/connector/quick-create'
+ import {
+   axisAlignedCursorAngle,
+   boxRotationCursor,
+@@ -107,6 +108,12 @@ export function updateHoverCursor(
+     return null
+   }
+ 
++  // A quick-create dot takes the pointer before anything under it.
++  if (hoverQuickCreate(editor, cx, cy)) {
++    editor.setHoveredNode(null)
++    return 'pointer'
++  }
++
+   // As a press does: a line's ends, a connector's line handles, then resizing, then a label, then
+   // rotation; a read-only document has none.
+   const cursor =
+diff --git a/src/App.vue b/src/App.vue
+index 552ff71..6c1457c 100644
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -13,6 +13,7 @@ import { startCloud } from '@/app/cloud/integration'
+ import { useDocumentCloseProtection } from '@/app/document/close/use'
+ import { endRecoverySession, startRecoverySession } from '@/app/document/recovery/session'
+ import { useFollowingEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { offerCrashReports } from '@/app/reports/crash'
+ import { interfaceScalePreference } from '@/app/shell/interface-scale'
+ import { animationsEnabled } from '@/app/shell/motion'
+@@ -54,7 +55,8 @@ provideEditor(useFollowingEditorStore())
+ useAppTheme()
+ useDocumentCloseProtection()
+ useRestartApprovals()
+-useWebUpdates()
++// A host serves the build it wants; a worker caching another would outlive it.
++if (!HOSTED) useWebUpdates()
+ startRecoverySession()
+ useEventListener(window, 'pagehide', () => {
+   void prepareForReload()
+diff --git a/src/app/document/close/use.ts b/src/app/document/close/use.ts
+index 048e3df..21a4475 100644
+--- a/src/app/document/close/use.ts
++++ b/src/app/document/close/use.ts
+@@ -3,6 +3,7 @@ import { useEventListener } from '@vueuse/core'
+ import { onMounted, onScopeDispose } from 'vue'
+ 
+ import { confirmAppExit, isExitApproved, pageAsksBeforeLeaving } from '@/app/document/close/exit'
++import { HOSTED } from '@/app/host/flags'
+ import { notificationMessages } from '@/app/i18n/notifications'
+ import { toast } from '@/app/shell/ui'
+ import { IS_TAURI } from '@/constants'
+@@ -13,7 +14,8 @@ export function useDocumentCloseProtection() {
+   const cleanup: Array<() => void> = []
+ 
+   useEventListener(window, 'beforeunload', (event) => {
+-    if (!pageAsksBeforeLeaving()) return
++    // A host's frame hands its document over as it changes; the host's page asks, if anything.
++    if (HOSTED || !pageAsksBeforeLeaving()) return
+     event.preventDefault()
+     event.returnValue = ''
+   })
+diff --git a/src/app/host/bridge.ts b/src/app/host/bridge.ts
+new file mode 100644
+index 0000000..6bcd3d0
+--- /dev/null
++++ b/src/app/host/bridge.ts
+@@ -0,0 +1,273 @@
++/**
++ * The hosted editor's line to the page that frames it (see `./flags`). The host keeps the document:
++ * it sends the file once the editor says it is ready, takes a copy after each run of edits, and
++ * relays its agent's requests to the same handler an MCP client's calls reach. Messages travel by
++ * `postMessage`; only the framing window is listened to, and the document is posted only to the
++ * origin that sent it in.
++ *
++ *   host → editor   { uigma: 'init', doc, name, type, canEdit, theme }
++ *                   { uigma: 'call', id, command, args } · { uigma: 'cancel', id }
++ *                   { uigma: 'flush' } · { uigma: 'theme', theme }
++ *   editor → host   { uigma: 'ready', version } · { uigma: 'loaded', summary }
++ *                   { uigma: 'dirty' } · { uigma: 'clean' } · { uigma: 'save', seq, bytes, summary }
++ *                   { uigma: 'result', id, ok, result | error } · { uigma: 'failed', error }
++ */
++// eslint-disable-next-line open-pencil/no-mixed-case-acronym-identifiers -- Upstream export spelling.
++import { toJsonSchema as toJSONSchema } from '@valibot/to-json-schema'
++
++import { ALL_TOOLS, isToolExposed } from '@open-pencil/core/tools'
++
++import { makeFigmaFromStore } from '@/app/automation/bridge/figma-factory'
++import { createAutomationCommandHandlers } from '@/app/automation/bridge/handlers'
++import type { EditorStore } from '@/app/editor/session/create'
++import { APP_VERSION } from '@/app/runtime/version'
++import { setAppTheme } from '@/app/shell/theme'
++import { getActiveStore, openFileInNewTab } from '@/app/tabs'
++
++import { HOSTED, hostedActions } from './flags'
++
++/** How long edits must pause before a copy goes to the host, and the longest a copy waits. */
++const QUIET_MS = 1500
++const MAX_WAIT_MS = 15_000
++
++/** The requests a host's agent may send: work on the document, never files, tabs, or settings. */
++const HOST_COMMANDS = new Set([
++  'tool',
++  'eval',
++  'export',
++  'export_jsx',
++  'selection',
++  'undo',
++  'redo'
++])
++
++const CONTENT_EVENTS = [
++  'node:created',
++  'node:updated',
++  'node:deleted',
++  'node:reparented',
++  'node:reordered',
++  'graph:replaced',
++  'history:changed'
++] as const
++
++interface HostInit {
++  doc?: ArrayBuffer | null
++  name?: string
++  type?: 'design' | 'board'
++  canEdit?: boolean
++  theme?: string
++}
++
++let hostOrigin: string | null = null
++let documentStore: EditorStore | null = null
++let editable = false
++let sequence = 0
++let timer: ReturnType<typeof setTimeout> | undefined
++let firstChangeAt = 0
++let announced = false
++let saving = false
++let again = false
++const running = new Map<string, AbortController>()
++
++function post(message: Record<string, unknown>, transfer: Transferable[] = []): void {
++  // Before the host has spoken only `ready` goes out, which says nothing about a document.
++  window.parent.postMessage(message, hostOrigin ?? '*', transfer)
++}
++
++function describe(error: unknown): string {
++  return error instanceof Error ? error.message : String(error)
++}
++
++function summarize(store: EditorStore) {
++  return {
++    pages: store.graph.getPages().map((page) => ({
++      id: page.id,
++      name: page.name,
++      layers: store.graph.countDescendants(page.id)
++    }))
++  }
++}
++
++function applyTheme(theme: unknown): void {
++  if (theme === 'dark' || theme === 'light') setAppTheme(theme)
++}
++
++/** The tools an agent may call, with their inputs, for the host to describe to its agent. */
++function describeTools() {
++  return ALL_TOOLS.filter((tool) => isToolExposed(tool, 'mcp')).map((tool) => ({
++    name: tool.name,
++    description: tool.description,
++    mutates: tool.mutates,
++    inputSchema: toJSONSchema(tool.input, { typeMode: 'input', errorMode: 'ignore' })
++  }))
++}
++
++function changed(): void {
++  if (!documentStore || !editable) return
++  if (!announced) {
++    announced = true
++    post({ uigma: 'dirty' })
++  }
++  const now = Date.now()
++  firstChangeAt ||= now
++  clearTimeout(timer)
++  timer = setTimeout(
++    () => void flush(),
++    Math.max(0, Math.min(QUIET_MS, firstChangeAt + MAX_WAIT_MS - now))
++  )
++}
++
++/** Hands the host a copy of the document as it is now, if it changed since the last one. */
++export async function flush(): Promise<void> {
++  clearTimeout(timer)
++  timer = undefined
++  const store = documentStore
++  if (!store || !editable) return
++  if (saving) {
++    again = true
++    return
++  }
++  firstChangeAt = 0
++  announced = false
++  if (!store.hasUnsavedChanges()) {
++    post({ uigma: 'clean' })
++    return
++  }
++  saving = true
++  try {
++    await store.saveFigFileCopy(async (data) => {
++      const bytes = new Uint8Array(data.byteLength)
++      bytes.set(data)
++      post({ uigma: 'save', seq: ++sequence, bytes: bytes.buffer, summary: summarize(store) }, [
++        bytes.buffer
++      ])
++    })
++  } catch (error) {
++    console.error('[Host] Could not hand the document over:', error)
++    post({ uigma: 'failed', saving: true, error: describe(error) })
++    again = true
++  } finally {
++    saving = false
++    if (again) {
++      again = false
++      changed()
++    }
++  }
++}
++
++async function open(init: HostInit): Promise<void> {
++  if (documentStore) return
++  try {
++    applyTheme(init.theme)
++    const name = init.name?.trim() || 'Untitled'
++    let store: EditorStore
++    if (init.doc && init.doc.byteLength > 0) {
++      const extension = init.type === 'board' ? 'jam' : 'fig'
++      store = await openFileInNewTab(
++        new File([init.doc], `${name}.${extension}`, { type: 'application/octet-stream' })
++      )
++    } else {
++      store = getActiveStore()
++      store.state.documentName = name
++    }
++    editable = init.canEdit === true
++    store.setReadOnly(!editable)
++    documentStore = store
++    for (const event of CONTENT_EVENTS) store.onEditorEvent(event, changed)
++    post({ uigma: 'loaded', summary: summarize(store) })
++  } catch (error) {
++    console.error('[Host] Could not open the document:', error)
++    post({ uigma: 'failed', error: describe(error) })
++  }
++}
++
++const automation = createAutomationCommandHandlers(makeFigmaFromStore)
++
++/**
++ * A result a window cannot be sent as it is (one holding a reactive object of the editor, as the
++ * viewport's) goes as its JSON.
++ */
++function postResult(id: string, result: unknown): void {
++  try {
++    post({ uigma: 'result', id, ok: true, result })
++  } catch (error) {
++    if (!(error instanceof DOMException) || error.name !== 'DataCloneError') throw error
++    post({ uigma: 'result', id, ok: true, result: JSON.parse(JSON.stringify(result)) })
++  }
++}
++
++async function call(id: string, command: string, args: unknown): Promise<void> {
++  const abort = new AbortController()
++  running.set(id, abort)
++  try {
++    const store = documentStore
++    if (!store) throw new Error('The document is still opening')
++    let result: unknown
++    if (command === 'tools') result = { ok: true, result: describeTools() }
++    else if (command === 'summary') result = { ok: true, result: summarize(store) }
++    else if (!HOST_COMMANDS.has(command)) throw new Error(`Unknown command: ${command}`)
++    else if (!editable) throw new Error('This document is open for viewing only')
++    else result = await automation.handleRequest(store, command, args, abort.signal)
++    postResult(id, result)
++  } catch (error) {
++    post({ uigma: 'result', id, ok: false, error: describe(error) })
++  } finally {
++    running.delete(id)
++  }
++}
++
++function receive(event: MessageEvent): void {
++  if (event.source !== window.parent) return
++  const message = event.data as Record<string, unknown> | null
++  if (!message || typeof message !== 'object' || typeof message.uigma !== 'string') return
++  hostOrigin ??= event.origin
++  if (event.origin !== hostOrigin) return
++  switch (message.uigma) {
++    case 'init':
++      void open(message as HostInit)
++      break
++    case 'call':
++      if (typeof message.id === 'string' && typeof message.command === 'string') {
++        void call(message.id, message.command, message.args)
++      }
++      break
++    case 'cancel':
++      if (typeof message.id === 'string') running.get(message.id)?.abort()
++      break
++    case 'flush':
++      void flush()
++      break
++    case 'theme':
++      applyTheme(message.theme)
++      break
++  }
++}
++
++/**
++ * Starts listening to the host and tells it the editor is up. The pointer or the focus leaving the
++ * frame, or the page going away, hands over what is not yet with the host: the host may drop the
++ * frame next (the person is on their way to another of its tabs).
++ */
++export function startHostBridge(): () => void {
++  if (!HOSTED) return () => undefined
++  const leaving = () => void flush()
++  const hidden = () => {
++    if (document.visibilityState === 'hidden') void flush()
++  }
++  hostedActions.save = leaving
++  window.addEventListener('message', receive)
++  window.addEventListener('blur', leaving)
++  window.addEventListener('pagehide', leaving)
++  document.documentElement.addEventListener('mouseleave', leaving)
++  document.addEventListener('visibilitychange', hidden)
++  post({ uigma: 'ready', version: APP_VERSION })
++  return () => {
++    window.removeEventListener('message', receive)
++    window.removeEventListener('blur', leaving)
++    window.removeEventListener('pagehide', leaving)
++    document.documentElement.removeEventListener('mouseleave', leaving)
++    document.removeEventListener('visibilitychange', hidden)
++    clearTimeout(timer)
++  }
++}
+diff --git a/src/app/host/flags.ts b/src/app/host/flags.ts
+new file mode 100644
+index 0000000..c43d9d6
+--- /dev/null
++++ b/src/app/host/flags.ts
+@@ -0,0 +1,49 @@
++/**
++ * Hosted mode: the editor runs in a frame of another app's page (Speca's Uigma canvas), which keeps
++ * the document itself. The host hands the file in, takes every save, and passes its agent's
++ * requests (see `./bridge`). `?speca=1` in the address turns it on; nothing here imports the app,
++ * so the entry module can read it before the bundle loads.
++ */
++const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search)
++
++export const HOSTED =
++  typeof window !== 'undefined' && window.parent !== window && params.has('speca')
++
++/** The kind of document a tab without a file of its own starts as. */
++export const HOSTED_DOCUMENT_KIND: 'design' | 'board' =
++  params.get('type') === 'board' ? 'board' : 'design'
++
++/** What Save does in a host's frame: hand the document over now. The bridge sets it once it runs. */
++export const hostedActions: { save: () => void } = { save: () => undefined }
++
++function put(key: string, value: string, always = false): void {
++  try {
++    if (always || localStorage.getItem(key) === null) localStorage.setItem(key, value)
++  } catch {
++    // Storage the frame may not use: the editor then starts with its own defaults.
++  }
++}
++
++/**
++ * What the host decides before the app reads its settings: its language and theme, whether fonts
++ * may come from the internet, and that nothing greets the person or keeps copies on its own — the
++ * host has the file. Preferences are written once, so the person's later choices stay.
++ */
++export function prepareHostedPreferences(): void {
++  if (!HOSTED) return
++  const lang = params.get('lang')
++  if (lang) put('open-pencil-locale', lang, true)
++  const theme = params.get('theme')
++  if (theme === 'dark' || theme === 'light') put('open-pencil:theme', theme, true)
++  put('op-online-fonts-enabled', params.get('fonts') === '1' ? 'true' : 'false', true)
++  put(
++    'open-pencil:preferences:v1',
++    JSON.stringify({
++      version: 1,
++      onboarding: { aiSetup: 'done' },
++      recovery: { enabled: false },
++      sharing: { dailyPing: false, usageStats: 'denied' },
++      updates: { checkOnStartup: false }
++    })
++  )
++}
+diff --git a/src/app/shell/document-drop.ts b/src/app/shell/document-drop.ts
+index bf59a98..08171c2 100644
+--- a/src/app/shell/document-drop.ts
++++ b/src/app/shell/document-drop.ts
+@@ -5,6 +5,7 @@ import { filterCanvasFiles } from '@open-pencil/vue/canvas/drop'
+ import { getActiveEditorStoreOrNull } from '@/app/editor/active-store'
+ import { isDesignTokenFileName } from '@/app/editor/tokens/design-tokens'
+ import { importTokenFiles } from '@/app/editor/tokens/dialog'
++import { HOSTED } from '@/app/host/flags'
+ import { openDesignFile, openDesignFileBatch } from '@/app/shell/menu/files'
+ 
+ interface DroppedFile {
+@@ -71,7 +72,8 @@ export function useDocumentDrop() {
+         tokens.map(({ file }) => file)
+       )
+     const documents = dropped.filter((entry) => !store || !tokens.includes(entry))
+-    if (documents.length === 0) return
++    // A host's frame holds one document; another opens from the host, not beside it.
++    if (documents.length === 0 || HOSTED) return
+     void openDesignFileBatch(
+       documents,
+       ({ file }) => file.name,
+diff --git a/src/app/shell/keyboard/use.ts b/src/app/shell/keyboard/use.ts
+index 00dc356..28fd957 100644
+--- a/src/app/shell/keyboard/use.ts
++++ b/src/app/shell/keyboard/use.ts
+@@ -1,6 +1,7 @@
+ import { useViewportKind } from '@open-pencil/vue/editor/viewport-kind'
+ 
+ import { useEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { createKeyboardActions } from '@/app/shell/keyboard/actions'
+ import { bindEditorClipboard } from '@/app/shell/keyboard/clipboard'
+ import { registerKeyboardShortcuts } from '@/app/shell/keyboard/registry'
+@@ -20,6 +21,21 @@ export function useKeyboard() {
+ 
+   bindEditorClipboard(store)
+ 
++  // A host's frame holds one document: the keys for files and tabs do nothing there.
++  const idle = () => undefined
++  if (HOSTED) {
++    registerKeyboardShortcuts({
++      store,
++      actions: { ...actions, toggleAI: idle },
++      openFileDialog: idle,
++      closeActiveTab: idle,
++      createTab: idle,
++      openNewFileTab: idle,
++      switchAdjacentTab: idle
++    })
++    return
++  }
++
+   registerKeyboardShortcuts({
+     store,
+     actions,
+diff --git a/src/app/shell/menu/actions/tabs.ts b/src/app/shell/menu/actions/tabs.ts
+index 6dda4cd..7ac2809 100644
+--- a/src/app/shell/menu/actions/tabs.ts
++++ b/src/app/shell/menu/actions/tabs.ts
+@@ -1,3 +1,4 @@
++import { HOSTED } from '@/app/host/flags'
+ import { openFileDialog } from '@/app/shell/menu/files'
+ import {
+   activeTab,
+@@ -10,6 +11,8 @@ import {
+ 
+ /** File and tab actions shared by the browser menu and the desktop menu. */
+ export function createTabMenuActions(): Partial<Record<string, () => void>> {
++  // A host's frame holds one document: no other tab opens beside it, and it does not close.
++  if (HOSTED) return {}
+   return {
+     new: () => createTab(),
+     'new-board': () => createDocumentTab('board'),
+diff --git a/src/app/shell/menu/features.ts b/src/app/shell/menu/features.ts
+index b06eeba..83fa16f 100644
+--- a/src/app/shell/menu/features.ts
++++ b/src/app/shell/menu/features.ts
+@@ -4,6 +4,7 @@ import { computed, watch } from 'vue'
+ import { isCloudBinding } from '@/app/cloud/integration'
+ import { DONATION_URL } from '@/app/donation'
+ import { useEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { REPORTS_ENABLED } from '@/app/reports/state'
+ import { showsDocument } from '@/app/tabs'
+ import { isTauri } from '@/app/tauri/env'
+@@ -20,7 +21,9 @@ const available: Record<AppMenuFeature, () => boolean> = {
+   // Version history lives on the Cloud server that keeps the document.
+   'cloud-document': () => isCloudBinding(store.getStorageBinding()),
+   reports: () => REPORTS_ENABLED,
+-  donation: () => DONATION_URL !== null
++  donation: () => DONATION_URL !== null,
++  standalone: () => !HOSTED,
++  'standalone-document': () => !HOSTED && showsDocument()
+ }
+ 
+ /** Whether a menu item that waits for a feature shows; items without one always do. */
+@@ -29,7 +32,10 @@ export function menuFeatureAvailable(feature: AppMenuFeature | undefined): boole
+ }
+ 
+ const availableFeatures = computed(() =>
+-  (Object.keys(available) as AppMenuFeature[]).filter((feature) => available[feature]())
++  (Object.keys(available) as AppMenuFeature[]).filter(
++    // The desktop menu is never framed by a host, and does not know the features that say so.
++    (feature) => !feature.startsWith('standalone') && available[feature]()
++  )
+ )
+ 
+ /** Keeps the desktop menu's feature items in step: it builds them only once told they're on. */
+diff --git a/src/app/shell/menu/save-actions.ts b/src/app/shell/menu/save-actions.ts
+index 85d7b33..bc1608e 100644
+--- a/src/app/shell/menu/save-actions.ts
++++ b/src/app/shell/menu/save-actions.ts
+@@ -3,6 +3,7 @@ import { isCanvasTextInput } from '@open-pencil/vue/canvas/text-edit'
+ import { openVersionDialog, openVersionHistory, saveDocument } from '@/app/cloud/integration'
+ import { saveWithFeedback } from '@/app/document/io/save/feedback'
+ import { getActiveEditorStore, type EditorStore } from '@/app/editor/active-store'
++import { HOSTED, hostedActions } from '@/app/host/flags'
+ import { openSaveTo } from '@/app/storage/save-to/session'
+ import { getTabForStore, showsDocument } from '@/app/tabs'
+ 
+@@ -35,6 +36,12 @@ function onDocument(run: (store: EditorStore) => void): () => void {
+ }
+ 
+ export function createSaveMenuActions() {
++  // In a host's frame the host keeps the document: saving hands it over, and nowhere else.
++  if (HOSTED) {
++    const save = onDocument(() => hostedActions.save())
++    const none = () => undefined
++    return { save, 'save-as': save, 'save-to': none, 'save-version': none, 'version-history': none }
++  }
+   return {
+     save: onDocument((store) => {
+       void saveWithFeedback(() => saveDocument(store), {
+diff --git a/src/app/shell/menu/schema/index.ts b/src/app/shell/menu/schema/index.ts
+index 7c0c103..6bb735b 100644
+--- a/src/app/shell/menu/schema/index.ts
++++ b/src/app/shell/menu/schema/index.ts
+@@ -25,12 +25,12 @@ export const APP_MENU_SCHEMA = [
+     label: 'File',
+     paletteIcon: 'file',
+     items: [
+-      { id: 'new', label: 'New Design', shortcut: 'Mod+N' },
+-      { id: 'new-board', label: 'New Board' },
+-      { id: 'new-tab', label: 'New Tab', shortcut: 'Mod+T' },
+-      { id: 'open', label: 'Open…', shortcut: 'Mod+O' },
++      { id: 'new', feature: 'standalone', label: 'New Design', shortcut: 'Mod+N' },
++      { id: 'new-board', feature: 'standalone', label: 'New Board' },
++      { id: 'new-tab', feature: 'standalone', label: 'New Tab', shortcut: 'Mod+T' },
++      { id: 'open', feature: 'standalone', label: 'Open…', shortcut: 'Mod+O' },
+       { id: 'open-recent', label: 'Open Recent', target: 'native' },
+-      { id: 'open-tour', label: 'Open the Tour', handler: 'shell' },
++      { id: 'open-tour', feature: 'standalone', label: 'Open the Tour', handler: 'shell' },
+       {
+         id: 'diagnostics',
+         label: 'Diagnostics…',
+@@ -53,8 +53,13 @@ export const APP_MENU_SCHEMA = [
+       },
+       { type: 'separator' },
+       { id: 'save', feature: 'document', label: 'Save', shortcut: 'Mod+S' },
+-      { id: 'save-as', feature: 'document', label: 'Save As…', shortcut: 'Mod+Shift+S' },
+-      { id: 'save-to', feature: 'document', label: 'Save To…' },
++      {
++        id: 'save-as',
++        feature: 'standalone-document',
++        label: 'Save As…',
++        shortcut: 'Mod+Shift+S'
++      },
++      { id: 'save-to', feature: 'standalone-document', label: 'Save To…' },
+       {
+         id: 'save-version',
+         label: 'Save to Version History…',
+@@ -99,10 +104,15 @@ export const APP_MENU_SCHEMA = [
+       },
+       { type: 'separator' },
+       { id: 'autosave', label: 'Autosave', checkbox: true, feature: 'local-file' },
+-      { id: 'close', feature: 'document', label: 'Close Tab', shortcut: 'Mod+W' },
++      { id: 'close', feature: 'standalone-document', label: 'Close Tab', shortcut: 'Mod+W' },
+       // ⌃Tab on every platform, as in Figma's desktop app, so it is not a MOD shortcut.
+-      { id: 'previous-tab', label: 'Select Previous Tab', shortcut: 'Control+Shift+Tab' },
+-      { id: 'next-tab', label: 'Select Next Tab', shortcut: 'Control+Tab' },
++      {
++        id: 'previous-tab',
++        feature: 'standalone',
++        label: 'Select Previous Tab',
++        shortcut: 'Control+Shift+Tab'
++      },
++      { id: 'next-tab', feature: 'standalone', label: 'Select Next Tab', shortcut: 'Control+Tab' },
+       // Windows, Linux, and the browser menu; macOS shows it in the application menu instead.
+       { type: 'separator' },
+       { ...SETTINGS_MENU_ITEM, handler: 'shell' }
+@@ -287,6 +297,7 @@ export const APP_MENU_SCHEMA = [
+       { type: 'separator' },
+       {
+         id: 'theme',
++        feature: 'standalone',
+         label: 'Theme',
+         sub: [
+           { id: 'theme-light', label: 'Light', checkbox: true, handler: 'shell' },
+@@ -294,7 +305,7 @@ export const APP_MENU_SCHEMA = [
+           { id: 'theme-auto', label: 'Auto', checkbox: true, handler: 'shell' }
+         ]
+       },
+-      { id: 'language', label: 'Language', target: 'browser' },
++      { id: 'language', feature: 'standalone', label: 'Language', target: 'browser' },
+       { type: 'separator' },
+       {
+         id: 'preferences',
+@@ -325,7 +336,7 @@ export const APP_MENU_SCHEMA = [
+       { id: 'toggle-ui', feature: 'document', label: 'Toggle UI', shortcut: 'Mod+\\' },
+       {
+         id: 'toggle-ai',
+-        feature: 'document',
++        feature: 'standalone-document',
+         label: 'Toggle AI Chat',
+         shortcut: 'Mod+J',
+         palette: { keywords: ['assistant', 'agent', 'chat', 'prompt'] }
+diff --git a/src/app/shell/menu/schema/types.ts b/src/app/shell/menu/schema/types.ts
+index 84dbf00..285d2b1 100644
+--- a/src/app/shell/menu/schema/types.ts
++++ b/src/app/shell/menu/schema/types.ts
+@@ -43,7 +43,16 @@ export type AppMenuHandler = 'editor' | 'shell'
+  * Cloud server; `reports`: the build sends problem reports, which only official releases do;
+  * `donation`: the build names a donation page, from the repository's `.github/FUNDING.yml`.
+  */
+-export type AppMenuFeature = 'document' | 'local-file' | 'cloud-document' | 'reports' | 'donation'
++export type AppMenuFeature =
++  | 'document'
++  | 'local-file'
++  | 'cloud-document'
++  | 'reports'
++  | 'donation'
++  /** Files, tabs, and app-wide choices, which a host that frames one document keeps to itself. */
++  | 'standalone'
++  /** As `standalone`, for an item that also needs a document in front. */
++  | 'standalone-document'
+ 
+ export interface AppMenuActionItem {
+   type?: 'item'
+diff --git a/src/components/MobileDrawer.vue b/src/components/MobileDrawer.vue
+index 3e1acf1..7b6aaab 100644
+--- a/src/components/MobileDrawer.vue
++++ b/src/components/MobileDrawer.vue
+@@ -8,6 +8,7 @@ import { computed, ref, watch } from 'vue'
+ import { useI18n } from '@open-pencil/vue/i18n'
+ 
+ import { useEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { useMotionTransition } from '@/app/shell/motion/transitions'
+ import ChatPanel from '@/components/chat/ChatPanel.vue'
+ import {
+@@ -168,6 +169,7 @@ const drawerTransition = useMotionTransition({
+           </TabsTrigger>
+ 
+           <TabsTrigger
++            v-if="!HOSTED"
+             data-test-id="mobile-ribbon-ai"
+             value="ai"
+             class="flex h-full cursor-pointer items-center justify-center px-3 transition-colors outline-none select-none data-[state=active]:text-primary"
+diff --git a/src/components/MobileHud/MobileHud.vue b/src/components/MobileHud/MobileHud.vue
+index 8c48ed6..82da474 100644
+--- a/src/components/MobileHud/MobileHud.vue
++++ b/src/components/MobileHud/MobileHud.vue
+@@ -1,4 +1,5 @@
+ <script setup lang="ts">
++import { HOSTED } from '@/app/host/flags'
+ import { provideMobileHud } from '@/components/MobileHud/context'
+ import MobileActionToast from '@/components/MobileHud/MobileActionToast.vue'
+ import MobileActiveToolBadge from '@/components/MobileHud/MobileActiveToolBadge.vue'
+@@ -26,7 +27,7 @@ provideMobileHud()
+     </div>
+ 
+     <div class="pointer-events-auto flex items-center gap-1.5">
+-      <MobileShareButton />
++      <MobileShareButton v-if="!HOSTED" />
+       <MobileFileMenu />
+     </div>
+   </div>
+diff --git a/src/components/MobileHud/context.ts b/src/components/MobileHud/context.ts
+index a28fce9..d18d13d 100644
+--- a/src/components/MobileHud/context.ts
++++ b/src/components/MobileHud/context.ts
+@@ -13,6 +13,7 @@ import { isCloudBinding, openCloudShare, saveDocument } from '@/app/cloud/integr
+ import { DEFAULT_COLLAB_STATE, useCollabInjected } from '@/app/collab/use'
+ import { saveWithFeedback } from '@/app/document/io/save/feedback'
+ import { useActiveEditorStoreRef, useEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { useNotificationMessages } from '@/app/i18n/notifications'
+ import { presenceOf, renameAgent as renameLocalAgent } from '@/app/presence/registry'
+ import type { FollowTarget } from '@/app/presence/types'
+@@ -61,7 +62,7 @@ function createMobileHudContext() {
+   const activeToolIcon = computed(() => toolIcons[store.state.activeTool])
+   const actionToast = computed(() => store.state.actionToast)
+ 
+-  const menuItems: MenuAction[] = [
++  const fileItems: MenuAction[] = [
+     {
+       icon: IconFilePlus,
+       label: 'New',
+@@ -76,7 +77,11 @@ function createMobileHudContext() {
+           key: store,
+           isOpen: () => getTabForStore(store) !== undefined
+         })
+-    },
++    }
++  ]
++  // Hosted: the host keeps the one file, so there is nothing to create, open or save here.
++  const menuItems: MenuAction[] = [
++    ...(HOSTED ? [] : fileItems),
+     { icon: IconImageDown, label: 'Export…', action: () => void store.exportSelection(1, 'png') },
+     { icon: IconZoomIn, label: 'Zoom to fit', action: () => getCommand('view.zoomFit').run() }
+   ]
+diff --git a/src/components/PropertiesPanel.vue b/src/components/PropertiesPanel.vue
+index 9f6ed9f..8b65685 100644
+--- a/src/components/PropertiesPanel.vue
++++ b/src/components/PropertiesPanel.vue
+@@ -10,6 +10,7 @@ import { useAIChat } from '@/app/ai/chat/use'
+ import { isVersionHistoryOpen } from '@/app/cloud/integration'
+ import { useEditorStore } from '@/app/editor/active-store'
+ import { countIssues } from '@/app/editor/design-check/issues'
++import { HOSTED } from '@/app/host/flags'
+ import ChatPanel from '@/components/chat/ChatPanel.vue'
+ import { CloudVersionHistory } from '@/components/cloud/integration'
+ import propertiesTabsTheme from '@/theme/panel/properties-tabs'
+@@ -74,7 +75,12 @@ const problemCount = computed(() => {
+           <icon-lucide-code :class="tabStyles.icon()" aria-hidden="true" />
+           <span :class="tabStyles.label()">{{ panels.code }}</span>
+         </TabsTrigger>
+-        <TabsTrigger value="ai" data-test-id="properties-tab-ai" :class="tabStyles.trigger()">
++        <TabsTrigger
++          v-if="!HOSTED"
++          value="ai"
++          data-test-id="properties-tab-ai"
++          :class="tabStyles.trigger()"
++        >
+           <icon-lucide-sparkles :class="tabStyles.icon()" aria-hidden="true" />
+           <span :class="tabStyles.label()">{{ panels.ai }}</span>
+         </TabsTrigger>
+diff --git a/src/components/collab-panel/CollabPanel.vue b/src/components/collab-panel/CollabPanel.vue
+index 0f8b372..b307158 100644
+--- a/src/components/collab-panel/CollabPanel.vue
++++ b/src/components/collab-panel/CollabPanel.vue
+@@ -3,6 +3,7 @@ import { computed } from 'vue'
+ 
+ import { isCloudBinding } from '@/app/cloud/integration'
+ import { useEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { CloudShareButton } from '@/components/cloud/integration'
+ import CollabAvatarStack from '@/components/collab-panel/CollabAvatarStack.vue'
+ import CollabSharePopover from '@/components/collab-panel/CollabSharePopover.vue'
+@@ -21,6 +22,6 @@ const cloud = computed(() => isCloudBinding(store.getStorageBinding()))
+     <VoiceCallControl v-if="collab.state.inRoom" :people="collab.callRows" />
+     <div class="flex-1" />
+     <CloudShareButton v-if="cloud" />
+-    <CollabSharePopover v-else />
++    <CollabSharePopover v-else-if="!HOSTED" />
+   </div>
+ </template>
+diff --git a/src/components/editor/WorkspacePill.vue b/src/components/editor/WorkspacePill.vue
+index ddee2bc..d11f558 100644
+--- a/src/components/editor/WorkspacePill.vue
++++ b/src/components/editor/WorkspacePill.vue
+@@ -1,6 +1,7 @@
+ <script setup lang="ts">
+ import { useI18n } from '@open-pencil/vue/i18n'
+ 
++import { HOSTED } from '@/app/host/flags'
+ import { resolvedAppTheme } from '@/app/shell/theme'
+ import BrandMark from '@/components/brand/BrandMark.vue'
+ import AppButton from '@/components/ui/button/AppButton.vue'
+@@ -32,7 +33,7 @@ const { editor } = useI18n()
+     class="absolute top-7 left-7 z-10 flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm"
+     :data-mode="mode"
+   >
+-    <BrandMark variant="app-icon" :appearance="resolvedAppTheme" class="size-6" />
++    <BrandMark v-if="!HOSTED" variant="app-icon" :appearance="resolvedAppTheme" class="size-6" />
+     <span data-test-id="editor-document-name" class="text-xs text-surface">{{ documentName }}</span>
+     <IconButton
+       v-if="mode === 'collapsed'"
+@@ -44,7 +45,7 @@ const { editor } = useI18n()
+       <icon-lucide-sidebar class="size-3.5" />
+     </IconButton>
+     <IconButton
+-      v-if="mode === 'collapsed'"
++      v-if="mode === 'collapsed' && !HOSTED"
+       toggle
+       :active="chatOpen"
+       :label="chatOpen ? editor.closeChat : editor.openChat"
+diff --git a/src/components/preparation/canvas/PreparationOverlay.vue b/src/components/preparation/canvas/PreparationOverlay.vue
+index b807675..e506f72 100644
+--- a/src/components/preparation/canvas/PreparationOverlay.vue
++++ b/src/components/preparation/canvas/PreparationOverlay.vue
+@@ -3,6 +3,7 @@ import { ProgressIndicator, ProgressRoot } from 'reka-ui'
+ import { computed } from 'vue'
+ 
+ import type { EditorPreparation } from '@/app/editor/preparation/types'
++import { HOSTED } from '@/app/host/flags'
+ import { resolvedAppTheme } from '@/app/shell/theme'
+ import BrandMark from '@/components/brand/BrandMark.vue'
+ import { preparationLabel, preparationPercent } from '@/components/preparation/presentation'
+@@ -26,7 +27,13 @@ const progressSteps = computed(() => Math.round(progressValue.value ?? 0))
+       class="absolute inset-0 z-50 flex items-center justify-center bg-canvas"
+     >
+       <div class="flex w-72 flex-col items-center gap-3 text-center">
+-        <BrandMark variant="app-icon" :appearance="resolvedAppTheme" decorative class="size-12" />
++        <BrandMark
++          v-if="!HOSTED"
++          variant="app-icon"
++          :appearance="resolvedAppTheme"
++          decorative
++          class="size-12"
++        />
+         <div class="space-y-1">
+           <p class="text-sm font-medium text-surface/80">{{ label }}</p>
+           <p v-if="preparation.detail" class="truncate text-xs text-surface/45">
+diff --git a/src/components/shell/AppMenu.vue b/src/components/shell/AppMenu.vue
+index ae6fe30..8ee165f 100644
+--- a/src/components/shell/AppMenu.vue
++++ b/src/components/shell/AppMenu.vue
+@@ -21,6 +21,7 @@ import { useI18n } from '@open-pencil/vue/i18n'
+ import { vTestId } from '@open-pencil/vue/testing'
+ 
+ import { useEditorStore } from '@/app/editor/active-store'
++import { HOSTED } from '@/app/host/flags'
+ import { openSettingsDialog } from '@/app/settings/dialog'
+ import { useAppMenu } from '@/app/shell/menu/app-menu'
+ import { useDocumentNameRename } from '@/app/shell/menu/document-name'
+@@ -93,6 +94,7 @@ function runChosenAction() {
+   <div class="shrink-0 border-b border-border">
+     <div class="flex items-center gap-2 px-2 py-1.5">
+       <BrandMark
++        v-if="!HOSTED"
+         data-test-id="app-logo"
+         variant="app-icon"
+         :appearance="resolvedAppTheme"
+diff --git a/src/components/shell/LoadingScreen.vue b/src/components/shell/LoadingScreen.vue
+index c961eff..099a6ae 100644
+--- a/src/components/shell/LoadingScreen.vue
++++ b/src/components/shell/LoadingScreen.vue
+@@ -1,6 +1,7 @@
+ <script setup lang="ts">
+ import { useI18n } from '@open-pencil/vue/i18n'
+ 
++import { HOSTED } from '@/app/host/flags'
+ import { resolvedAppTheme } from '@/app/shell/theme'
+ import BrandMark from '@/components/brand/BrandMark.vue'
+ 
+@@ -17,7 +18,13 @@ const { panels } = useI18n()
+     :aria-label="panels.loading"
+     class="fixed inset-0 z-50 flex items-center justify-center bg-canvas"
+   >
+-    <BrandMark variant="app-icon" :appearance="resolvedAppTheme" decorative class="size-10" />
++    <BrandMark
++      v-if="!HOSTED"
++      variant="app-icon"
++      :appearance="resolvedAppTheme"
++      decorative
++      class="size-10"
++    />
+     <div
+       class="absolute bottom-1/2 left-1/2 h-0.5 w-25 -translate-x-1/2 translate-y-10 overflow-hidden rounded-full bg-surface/8"
+     >
+diff --git a/src/main.ts b/src/main.ts
+index 5fa6233..15de0f7 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,8 +1,10 @@
++import { prepareHostedPreferences } from '@/app/host/flags'
+ import { reportBootFailure, runSupportGate } from '@/app/shell/support/gate'
+ 
+ // Keep this module free of the app bundle: it must evaluate on engines that
+ // cannot run the app so it can explain why (see src/app/shell/support/).
+ async function start(): Promise<void> {
++  prepareHostedPreferences()
+   if (!(await runSupportGate())) return
+   try {
+     // A Cloud server's root welcomes visitors who are not signed in before loading the editor.
+diff --git a/src/views/WorkspaceView.vue b/src/views/WorkspaceView.vue
+index 8870070..3b5d196 100644
+--- a/src/views/WorkspaceView.vue
++++ b/src/views/WorkspaceView.vue
+@@ -27,6 +27,8 @@ import { openWebLinkFromLocation, withoutWebLinkParams } from '@/app/document/io
+ import { offerDonationPrompt, startDonationClock } from '@/app/donation'
+ import { setActiveEditorStore } from '@/app/editor/active-store'
+ import { focusNodesByName } from '@/app/editor/selection/focus'
++import { startHostBridge } from '@/app/host/bridge'
++import { HOSTED, HOSTED_DOCUMENT_KIND } from '@/app/host/flags'
+ import { notificationMessages } from '@/app/i18n/notifications'
+ import { appRuntimeConfig } from '@/app/runtime/config'
+ import { useDocumentDrop } from '@/app/shell/document-drop'
+@@ -83,11 +85,11 @@ const router = useRouter()
+ const createdInitialTab = tabCount() === 0
+ // Home is pinned first everywhere but tests and the demo, and opens in front, as Figma's does:
+ // it is where a design or a board is started, with or without recent files to list.
+-const pinHome = !appRuntimeConfig.test && !route.meta.demo
++const pinHome = !appRuntimeConfig.test && !route.meta.demo && !HOSTED
+ const showHomeFirst = route.path === '/' && pinHome
+ // The view stays mounted from /demo to /, so Home is pinned once a route that has it is reached.
+ watch(
+-  () => !appRuntimeConfig.test && !route.meta.demo,
++  () => !appRuntimeConfig.test && !route.meta.demo && !HOSTED,
+   (pins) => {
+     if (pins) ensureHomeTab()
+   }
+@@ -107,6 +109,8 @@ const joinRoomFromInput = useJoinRoom()
+  * the app has one, is pinned first behind it.
+  */
+ function openFirstTab(): Tab {
++  // A host's frame holds the one document the host keeps, of the kind it asked for.
++  if (HOSTED) return createDocumentTab(HOSTED_DOCUMENT_KIND)
+   const roomId = typeof route.params.roomId === 'string' ? route.params.roomId : null
+   if (pinHome) createHomeTab()
+   if (roomId) {
+@@ -136,12 +140,12 @@ function openFirstTab(): Tab {
+ 
+ // A first visit to the demo link is a first run too; the welcome there skips the tour offer.
+ const welcomeShown =
+-  createdInitialTab && (route.path === '/' || route.meta.demo) && !appRuntimeConfig.test
++  createdInitialTab && (route.path === '/' || route.meta.demo) && !appRuntimeConfig.test && !HOSTED
+     ? offerAISetupOnFirstRun({ inTour: route.meta.demo === true })
+     : false
+ const sharingStarted = startSharing()
+ // Release builds ask for donations; development and test runs would only be interrupted.
+-const asksForDonations = import.meta.env.PROD && !appRuntimeConfig.test
++const asksForDonations = import.meta.env.PROD && !appRuntimeConfig.test && !HOSTED
+ // One question per launch: a first run is asked about usage stats once the welcome closes, and
+ // a later launch about usage stats if still unanswered, otherwise about a donation once it is due.
+ if (welcomeShown) {
+@@ -258,10 +262,13 @@ async function bindAssociatedFileOpen(): Promise<void> {
+ }
+ 
+ let stopWebMCP: (() => void) | undefined
++let stopHostBridge: (() => void) | undefined
+ 
+ onMounted(async () => {
++  stopHostBridge = startHostBridge()
+   stopWebMCP = startWebMCP(getActiveStore)
+-  await startMCPRuntime(getActiveStore)
++  // Hosted: the host's agent comes through the bridge; there is no local server to look for.
++  if (!HOSTED) await startMCPRuntime(getActiveStore)
+ 
+   try {
+     await bindAssociatedFileOpen()
+@@ -293,6 +300,7 @@ onMounted(async () => {
+ 
+ onUnmounted(() => {
+   stopWebMCP?.()
++  stopHostBridge?.()
+   void stopMCPRuntime()
+   fileAssociationCleanup.value?.()
+   roomLinksCleanup.value?.()
+@@ -306,7 +314,7 @@ onUnmounted(() => {
+     <FontStatusBanner />
+     <RenameSelectionDialog />
+     <CommandPalette />
+-    <TabBar />
++    <TabBar v-if="!HOSTED" />
+     <HomeWorkspace
+       v-show="activeTab && activeTab.kind !== 'document'"
+       @new-document="createDocumentTab"

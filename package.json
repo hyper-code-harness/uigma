@@ -1,0 +1,22 @@
+{
+  "name": "uigma",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Figma-like design editor and FigJam-like boards on the Hyper canvas, built on OpenPencil (MIT).",
+  "license": "MIT",
+  "procs": {
+    "src": "src",
+    "label": "Uigma",
+    "icon": "ph-bezier-curve",
+    "description": "Design files and boards in a full Figma-like editor on the canvas (OpenPencil): frames, auto layout, components with variants, variables, vectors, stickies, connectors and sections; .fig files in and out; the agent edits the same open file with uigma.run while the person watches.",
+    "configuration": {
+      "settings": ["uigma.editorDir", "uigma.dataDir", "uigma.editorPort", "uigma.editorHost", "uigma.editorUrl", "uigma.online"]
+    }
+  },
+  "scripts": {
+    "test": "bun ${HYPER_CODE:-../hyper-code2}/script/plugin-test.ts .",
+    "editor:build": "bun editor/build.ts",
+    "editor:pack": "bun editor/pack.ts"
+  }
+}

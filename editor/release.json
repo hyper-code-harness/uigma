@@ -1,0 +1,7 @@
+{
+  "comment": "The prebuilt editor that uigma.installEditor({}) downloads: an asset of a GitHub release of this repository. Empty until the first release carries one — fill url and sha256 from `bun editor/pack.ts` (see README, Releasing).",
+  "url": "",
+  "sha256": "",
+  "version": "0.17.0-beta.2",
+  "commit": "cabbffd06c192ecfaaab3951994fb2424f3bc326"
+}

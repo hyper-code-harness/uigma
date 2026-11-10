@@ -628,6 +628,33 @@ index c67920b..9137824 100644
    panX: number
    pageColor: Color
    panY: number
+diff --git a/packages/dom-css/src/runtime/browser.ts b/packages/dom-css/src/runtime/browser.ts
+index db3ff3e..1f04be0 100644
+--- a/packages/dom-css/src/runtime/browser.ts
++++ b/packages/dom-css/src/runtime/browser.ts
+@@ -225,11 +225,19 @@ async function settle(browserDocument: Document, content: ParentNode): Promise<v
+   await requestFrame(browserDocument)
+ }
+ 
++/**
++ * How long a frame is waited for. A browser draws no frames for a document it does not show — the
++ * sandbox off screen, when the editor itself runs in a frame of another site — so the wait ends
++ * by the clock there; layout is read synchronously afterwards either way.
++ */
++const FRAME_LIMIT_MS = 120
++
+ function requestFrame(browserDocument: Document): Promise<void> {
+-  const requestAnimationFrame = browserDocument.defaultView?.requestAnimationFrame
+-  if (!requestAnimationFrame) return Promise.resolve()
++  const view = browserDocument.defaultView
++  if (!view?.requestAnimationFrame) return Promise.resolve()
+   return new Promise((resolve) => {
+-    requestAnimationFrame(() => resolve())
++    view.requestAnimationFrame(() => resolve())
++    view.setTimeout(resolve, FRAME_LIMIT_MS)
+   })
+ }
+ 
 diff --git a/packages/scene-graph/src/graph.ts b/packages/scene-graph/src/graph.ts
 index 0d23b13..e1ad09a 100644
 --- a/packages/scene-graph/src/graph.ts
@@ -834,12 +861,32 @@ index 048e3df..21a4475 100644
      event.preventDefault()
      event.returnValue = ''
    })
+diff --git a/src/app/editor/clipboard/system/browser.ts b/src/app/editor/clipboard/system/browser.ts
+index 95b2ae9..3f7c3c3 100644
+--- a/src/app/editor/clipboard/system/browser.ts
++++ b/src/app/editor/clipboard/system/browser.ts
+@@ -17,6 +17,7 @@ import type {
+   ClipboardPayload,
+   SystemClipboard
+ } from '@/app/editor/clipboard/system/types'
++import { hostedActions } from '@/app/host/flags'
+ 
+ function populateLegacyClipboard(data: DataTransfer, payload: ClipboardPayload): void {
+   if (payload.html) data.setData('text/html', payload.html)
+@@ -105,6 +106,7 @@ async function pasteSelection(
+ ): Promise<boolean> {
+   const result = await io.read()
+   if (result.available) {
++    if (result.html && hostedActions.paste(result.html)) return true
+     if (result.html && isDesignClipboardHTML(result.html)) {
+       await pasteClipboardHTML(store, result.html, cursorPos)
+       return true
 diff --git a/src/app/host/bridge.ts b/src/app/host/bridge.ts
 new file mode 100644
-index 0000000..6bcd3d0
+index 0000000..1522fd1
 --- /dev/null
 +++ b/src/app/host/bridge.ts
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,323 @@
 +/**
 + * The hosted editor's line to the page that frames it (see `./flags`). The host keeps the document:
 + * it sends the file once the editor says it is ready, takes a copy after each run of edits, and
@@ -849,10 +896,12 @@ index 0000000..6bcd3d0
 + *
 + *   host → editor   { uigma: 'init', doc, name, type, canEdit, theme }
 + *                   { uigma: 'call', id, command, args } · { uigma: 'cancel', id }
++ *                     (`reveal` { ids } is the bridge's own command: select layers and show them)
 + *                   { uigma: 'flush' } · { uigma: 'theme', theme }
 + *   editor → host   { uigma: 'ready', version } · { uigma: 'loaded', summary }
 + *                   { uigma: 'dirty' } · { uigma: 'clean' } · { uigma: 'save', seq, bytes, summary }
 + *                   { uigma: 'result', id, ok, result | error } · { uigma: 'failed', error }
++ *                   { uigma: 'paste-pages', tab, parts }
 + */
 +// eslint-disable-next-line open-pencil/no-mixed-case-acronym-identifiers -- Upstream export spelling.
 +import { toJsonSchema as toJSONSchema } from '@valibot/to-json-schema'
@@ -915,6 +964,31 @@ index 0000000..6bcd3d0
 +function post(message: Record<string, unknown>, transfer: Transferable[] = []): void {
 +  // Before the host has spoken only `ready` goes out, which says nothing about a document.
 +  window.parent.postMessage(message, hostOrigin ?? '*', transfer)
++}
++
++/**
++ * A paste of pages copied on another of the host's canvases: the clipboard carries only their
++ * address (`data-speca-pages`), and the host brings them in as layers. True when the paste is its.
++ */
++function offerPages(html: string): boolean {
++  if (!HOSTED || !documentStore || !editable || !html.includes('data-speca-pages')) return false
++  const mark = new DOMParser()
++    .parseFromString(html, 'text/html')
++    .querySelector('[data-speca-pages]')
++    ?.getAttribute('data-speca-pages')
++  if (!mark) return false
++  let address: unknown
++  try {
++    address = JSON.parse(mark)
++  } catch {
++    return false
++  }
++  if (typeof address !== 'object' || address === null) return false
++  const { tab, parts } = address as { tab?: unknown; parts?: unknown }
++  if (typeof tab !== 'string' || !Array.isArray(parts) || !parts.length) return false
++  if (!parts.every((part) => typeof part === 'string')) return false
++  post({ uigma: 'paste-pages', tab, parts })
++  return true
 +}
 +
 +function describe(error: unknown): string {
@@ -1039,6 +1113,27 @@ index 0000000..6bcd3d0
 +  }
 +}
 +
++/**
++ * Selects layers of the page on screen and brings them into view: what the person sees after a
++ * paste the host carried out for them. Layers of other pages, or gone meanwhile, are left alone.
++ */
++function reveal(store: EditorStore, args: unknown): number {
++  const named = (args as { ids?: unknown } | null)?.ids
++  const onScreen = (id: string): boolean => {
++    for (let node = store.graph.getNode(id); node; node = store.graph.getNode(node.parentId ?? '')) {
++      if (node.id === store.state.currentPageId) return true
++    }
++    return false
++  }
++  const ids = (Array.isArray(named) ? named : []).filter(
++    (id): id is string => typeof id === 'string' && onScreen(id)
++  )
++  if (ids.length === 0) return 0
++  store.select(ids)
++  store.zoomToSelection()
++  return ids.length
++}
++
 +async function call(id: string, command: string, args: unknown): Promise<void> {
 +  const abort = new AbortController()
 +  running.set(id, abort)
@@ -1048,6 +1143,7 @@ index 0000000..6bcd3d0
 +    let result: unknown
 +    if (command === 'tools') result = { ok: true, result: describeTools() }
 +    else if (command === 'summary') result = { ok: true, result: summarize(store) }
++    else if (command === 'reveal') result = { ok: true, result: { shown: reveal(store, args) } }
 +    else if (!HOST_COMMANDS.has(command)) throw new Error(`Unknown command: ${command}`)
 +    else if (!editable) throw new Error('This document is open for viewing only')
 +    else result = await automation.handleRequest(store, command, args, abort.signal)
@@ -1098,6 +1194,7 @@ index 0000000..6bcd3d0
 +    if (document.visibilityState === 'hidden') void flush()
 +  }
 +  hostedActions.save = leaving
++  hostedActions.paste = offerPages
 +  window.addEventListener('message', receive)
 +  window.addEventListener('blur', leaving)
 +  window.addEventListener('pagehide', leaving)
@@ -1115,10 +1212,10 @@ index 0000000..6bcd3d0
 +}
 diff --git a/src/app/host/flags.ts b/src/app/host/flags.ts
 new file mode 100644
-index 0000000..c43d9d6
+index 0000000..400783a
 --- /dev/null
 +++ b/src/app/host/flags.ts
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,55 @@
 +/**
 + * Hosted mode: the editor runs in a frame of another app's page (Speca's Uigma canvas), which keeps
 + * the document itself. The host hands the file in, takes every save, and passes its agent's
@@ -1134,8 +1231,14 @@ index 0000000..c43d9d6
 +export const HOSTED_DOCUMENT_KIND: 'design' | 'board' =
 +  params.get('type') === 'board' ? 'board' : 'design'
 +
-+/** What Save does in a host's frame: hand the document over now. The bridge sets it once it runs. */
-+export const hostedActions: { save: () => void } = { save: () => undefined }
++/**
++ * What the host's frame changes in the app: Save hands the document over now, and a paste is first
++ * offered to the host (true when it took it). The bridge sets both once it runs.
++ */
++export const hostedActions: { save: () => void; paste: (html: string) => boolean } = {
++  save: () => undefined,
++  paste: () => false
++}
 +
 +function put(key: string, value: string, always = false): void {
 +  try {
@@ -1190,6 +1293,26 @@ index bf59a98..08171c2 100644
      void openDesignFileBatch(
        documents,
        ({ file }) => file.name,
+diff --git a/src/app/shell/keyboard/clipboard.ts b/src/app/shell/keyboard/clipboard.ts
+index bf69b4e..1f66162 100644
+--- a/src/app/shell/keyboard/clipboard.ts
++++ b/src/app/shell/keyboard/clipboard.ts
+@@ -16,6 +16,7 @@ import { pasteWebClipboard } from '@/app/editor/clipboard/paste/web'
+ import { browserSystemClipboard } from '@/app/editor/clipboard/system/browser'
+ import { tauriSystemClipboard } from '@/app/editor/clipboard/system/tauri'
+ import type { SystemClipboard } from '@/app/editor/clipboard/system/types'
++import { hostedActions } from '@/app/host/flags'
+ import { isTauri } from '@/app/tauri/env'
+ 
+ function cursorPosition(store: EditorStore) {
+@@ -85,6 +86,7 @@ export function bindEditorClipboard(store: EditorStore) {
+ 
+     // Like Figma, Paste keeps the copied position; Paste here in the canvas menu uses the cursor.
+     const html = e.clipboardData?.getData('text/html') ?? ''
++    if (html && hostedActions.paste(html)) return
+     if (html && isDesignClipboardHTML(html)) {
+       void pasteClipboardHTML(store, html)
+       return
 diff --git a/src/app/shell/keyboard/use.ts b/src/app/shell/keyboard/use.ts
 index 00dc356..28fd957 100644
 --- a/src/app/shell/keyboard/use.ts
@@ -1506,6 +1629,59 @@ index 9f6ed9f..8b65685 100644
            <icon-lucide-sparkles :class="tabStyles.icon()" aria-hidden="true" />
            <span :class="tabStyles.label()">{{ panels.ai }}</span>
          </TabsTrigger>
+diff --git a/src/components/brand/UigmaMark.vue b/src/components/brand/UigmaMark.vue
+new file mode 100644
+index 0000000..ef665e1
+--- /dev/null
++++ b/src/components/brand/UigmaMark.vue
+@@ -0,0 +1,47 @@
++<!-- Uigma's wordmark: shown in a host's frame (Speca) in place of OpenPencil's mark. -->
++<template>
++  <svg xmlns="http://www.w3.org/2000/svg" viewBox="258 97 1660 571" role="img" aria-label="Uigma"><g transform="translate(0.000000,724.000000) scale(0.100000,-0.100000)"
++fill="currentColor" stroke="none">
++<path d="M8726 5070 c-658 -63 -1191 -551 -1342 -1231 -42 -187 -42 -540 -1
++-734 66 -308 200 -550 436 -785 174 -173 313 -263 530 -340 467 -167 977 -81
++1356 227 l118 96 -7 -88 c-19 -256 -190 -499 -432 -615 -160 -77 -243 -94
++-449 -94 -100 0 -195 5 -230 13 -183 38 -397 134 -540 241 -149 111 -156 107
++-377 -176 -43 -54 -116 -148 -163 -207 -113 -144 -118 -170 -47 -249 123 -137
++381 -291 640 -383 399 -142 916 -161 1277 -48 717 225 1103 649 1222 1342 14
++85 17 244 20 1356 5 1441 2 1577 -33 1612 l-23 23 -386 0 c-275 0 -393 -3
++-408 -12 -42 -22 -46 -37 -47 -180 0 -76 -2 -138 -6 -138 -3 0 -36 25 -75 55
++-306 245 -654 351 -1033 315z m473 -810 c324 -78 580 -386 598 -720 20 -379
++-260 -744 -627 -816 -402 -79 -805 191 -897 601 -125 565 372 1068 926 935z"/>
++<path d="M12190 5065 c-533 -72 -942 -384 -1119 -856 -84 -224 -85 -231 -88
++-1029 -5 -962 2 -1185 33 -1217 l23 -23 406 0 406 0 23 23 c34 34 39 194 35
++1098 -3 814 -4 790 56 915 158 326 613 336 783 16 69 -129 66 -81 69 -1077 2
++-495 5 -910 8 -922 12 -51 33 -53 455 -53 261 0 398 4 412 11 48 26 48 18 48
++957 0 964 -2 930 61 1061 165 338 670 347 846 14 71 -134 67 -70 70 -1068 2
++-495 5 -910 8 -922 12 -51 33 -53 460 -53 l397 0 29 29 29 29 0 961 c0 633 -4
++986 -11 1037 -47 339 -222 641 -476 823 -518 372 -1324 336 -1798 -81 l-36
++-31 -37 36 c-249 239 -705 374 -1092 322z"/>
++<path d="M17145 5069 c-435 -43 -845 -292 -1086 -659 -246 -374 -332 -896
++-224 -1357 133 -561 539 -985 1075 -1119 161 -40 505 -43 663 -6 191 46 383
++142 535 267 l102 85 0 -141 0 -141 29 -29 29 -29 400 0 400 0 26 31 26 31 0
++1483 0 1483 -26 31 -26 31 -398 0 -399 0 -28 -24 -28 -24 0 -136 c1 -138 -2
++-149 -26 -119 -34 41 -224 169 -324 218 -211 104 -473 149 -720 124z m436
++-809 c266 -58 494 -275 569 -542 139 -490 -207 -983 -705 -1005 -232 -10 -393
++54 -565 227 -169 168 -220 290 -228 535 -5 181 6 232 80 385 152 312 502 477
++849 400z"/>
++<path d="M2666 4989 l-27 -21 4 -922 c4 -1013 1 -958 68 -1165 183 -564 665
++-951 1273 -1022 129 -15 473 -6 576 15 209 43 349 89 476 157 362 193 622 509
++728 884 61 213 59 183 63 1142 4 959 6 935 -50 948 -12 3 -201 4 -420 3 l-399
++-3 -19 -24 c-18 -22 -19 -51 -19 -830 0 -912 0 -914 -77 -1069 -56 -114 -187
++-244 -303 -301 -368 -180 -795 -3 -934 387 l-31 87 -3 855 -3 855 -21 22 -21
++23 -417 0 c-409 0 -418 0 -444 -21z"/>
++<path d="M6246 4889 l-26 -21 2 -1439 3 -1440 25 -19 c24 -19 46 -20 425 -20
++435 0 434 0 455 56 5 13 10 636 10 1439 l2 1417 -23 24 -22 24 -412 0 c-402 0
++-413 0 -439 -21z"/>
++</g><g transform="translate(0.000000,724.000000) scale(0.100000,-0.100000)"
++fill="#6100FF" stroke="none">
++<path d="M6350 6187 c-79 -27 -160 -84 -199 -141 -56 -81 -63 -127 -59 -413
++l3 -258 28 -56 c54 -111 173 -193 305 -210 111 -14 478 -11 553 5 162 35 267
++129 304 274 13 51 16 107 13 300 l-3 237 -31 66 c-35 74 -82 125 -149 164 -83
++49 -127 55 -425 55 -258 -1 -279 -2 -340 -23z"/>
++</g></svg>
++</template>
 diff --git a/src/components/collab-panel/CollabPanel.vue b/src/components/collab-panel/CollabPanel.vue
 index 0f8b372..b307158 100644
 --- a/src/components/collab-panel/CollabPanel.vue
@@ -1527,27 +1703,33 @@ index 0f8b372..b307158 100644
    </div>
  </template>
 diff --git a/src/components/editor/WorkspacePill.vue b/src/components/editor/WorkspacePill.vue
-index ddee2bc..d11f558 100644
+index ddee2bc..3609b4f 100644
 --- a/src/components/editor/WorkspacePill.vue
 +++ b/src/components/editor/WorkspacePill.vue
-@@ -1,6 +1,7 @@
+@@ -1,8 +1,10 @@
  <script setup lang="ts">
  import { useI18n } from '@open-pencil/vue/i18n'
  
 +import { HOSTED } from '@/app/host/flags'
  import { resolvedAppTheme } from '@/app/shell/theme'
  import BrandMark from '@/components/brand/BrandMark.vue'
++import UigmaMark from '@/components/brand/UigmaMark.vue'
  import AppButton from '@/components/ui/button/AppButton.vue'
-@@ -32,7 +33,7 @@ const { editor } = useI18n()
+ import IconButton from '@/components/ui/button/IconButton.vue'
+ 
+@@ -32,8 +34,9 @@ const { editor } = useI18n()
      class="absolute top-7 left-7 z-10 flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm"
      :data-mode="mode"
    >
 -    <BrandMark variant="app-icon" :appearance="resolvedAppTheme" class="size-6" />
+-    <span data-test-id="editor-document-name" class="text-xs text-surface">{{ documentName }}</span>
 +    <BrandMark v-if="!HOSTED" variant="app-icon" :appearance="resolvedAppTheme" class="size-6" />
-     <span data-test-id="editor-document-name" class="text-xs text-surface">{{ documentName }}</span>
++    <UigmaMark v-if="HOSTED" class="h-4 w-auto text-surface" />
++    <span v-else data-test-id="editor-document-name" class="text-xs text-surface">{{ documentName }}</span>
      <IconButton
        v-if="mode === 'collapsed'"
-@@ -44,7 +45,7 @@ const { editor } = useI18n()
+       :label="editor.showUI({ shortcut })"
+@@ -44,7 +47,7 @@ const { editor } = useI18n()
        <icon-lucide-sidebar class="size-3.5" />
      </IconButton>
      <IconButton
@@ -1584,7 +1766,7 @@ index b807675..e506f72 100644
            <p class="text-sm font-medium text-surface/80">{{ label }}</p>
            <p v-if="preparation.detail" class="truncate text-xs text-surface/45">
 diff --git a/src/components/shell/AppMenu.vue b/src/components/shell/AppMenu.vue
-index ae6fe30..8ee165f 100644
+index ae6fe30..7f2fbf2 100644
 --- a/src/components/shell/AppMenu.vue
 +++ b/src/components/shell/AppMenu.vue
 @@ -21,6 +21,7 @@ import { useI18n } from '@open-pencil/vue/i18n'
@@ -1595,11 +1777,21 @@ index ae6fe30..8ee165f 100644
  import { openSettingsDialog } from '@/app/settings/dialog'
  import { useAppMenu } from '@/app/shell/menu/app-menu'
  import { useDocumentNameRename } from '@/app/shell/menu/document-name'
-@@ -93,6 +94,7 @@ function runChosenAction() {
+@@ -40,6 +41,7 @@ import { appMenuShortcutLabel } from '@/app/shell/menu/shortcut'
+ import { animationsEnabled } from '@/app/shell/motion'
+ import { resolvedAppTheme } from '@/app/shell/theme'
+ import BrandMark from '@/components/brand/BrandMark.vue'
++import UigmaMark from '@/components/brand/UigmaMark.vue'
+ import { CloudDocumentStatusHost, CloudReportButton } from '@/components/cloud/integration'
+ import IconButton from '@/components/ui/button/IconButton.vue'
+ import { useScrollOverflow } from '@/components/ui/list/useScrollOverflow'
+@@ -92,7 +94,9 @@ function runChosenAction() {
+ <template>
    <div class="shrink-0 border-b border-border">
      <div class="flex items-center gap-2 px-2 py-1.5">
++      <UigmaMark v-if="HOSTED" class="h-4 w-auto shrink-0 text-surface" />
        <BrandMark
-+        v-if="!HOSTED"
++        v-else
          data-test-id="app-logo"
          variant="app-icon"
          :appearance="resolvedAppTheme"

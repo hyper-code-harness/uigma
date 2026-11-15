@@ -43,7 +43,6 @@ export default async function (ctx: Context, _session: Session | null, opts: {
         if (!existsSync(join(next, "index.html"))) { await rm(next, { recursive: true, force: true }); throw new Error("uigma.installEditor: the build has no index.html"); }
         await rm(dir, { recursive: true, force: true });
         await rename(next, dir);
-        await ctx.fns.uigma.stopEditorServer({});
         const meta = await Bun.file(join(dir, "uigma.json")).json().catch(() => ({})) as { version?: string };
         return meta.version ?? "";
     };
@@ -94,8 +93,7 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     });
     p.exited.then(async code => {
         install.code = code; install.done = true;
-        if (code === 0) await ctx.fns.uigma.stopEditorServer({});
-        else install.error = `the build failed (exit ${code}) — see ${log}`;
+        if (code !== 0) install.error = `the build failed (exit ${code}) — see ${log}`;
     }, e => { install.done = true; install.error = String(e); });
     return { ok: true, mode, dir, started: true, log, message: `building OpenPencil with the patch into ${dir} — a few minutes; uigma.editorStatus({}) says when it is done, ${log} shows the build` };
 }

@@ -29,9 +29,10 @@ it is one document that Speca keeps, so with `?speca=1` in its address and a fra
   edits (and when the pointer or the focus leaves the frame), and runs the requests of the person's agent through the
   same handler the editor's MCP server uses — tools, `eval`, export, undo and redo, nothing about files or settings.
 
-The other side of that conversation is `src/uigma/$script_host.js`. The editor's page is served by `src/uigma/editorServer.ts` on
-127.0.0.1 with a policy that gives it no network (fonts and icons from the internet only with the plugin's setting),
-on an origin of its own: it holds no Hyper session and cannot reach Hyper.
+The other side of that conversation is `src/uigma/$script_host.js`. The build is served by Hyper under
+`/uigma/editor/` (`src/uigma/$middleware_editor.ts`, built with `--base /uigma/editor/`) with a policy that gives it
+no network beyond Hyper's origin (fonts and icons from the internet only with the plugin's setting); it calls no
+Hyper API itself — the file and the saves go through the host page.
 
 ## Fixes the patch carries
 

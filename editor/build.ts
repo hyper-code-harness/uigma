@@ -65,7 +65,8 @@ if (import.meta.main) {
         await run(["bun", "run", "build:packages"], src, { PATH });
     }
     // no cloud: the standalone app's accounts and sharing stay out of the build
-    await run(["bunx", "vite", "build"], src, { PATH, VITE_OPENPENCIL_CLOUD: "off" });
+    // under Hyper's own origin: the plugin serves the build at /uigma/editor/ ($middleware_editor.ts)
+    await run(["bunx", "vite", "build", "--base", "/uigma/editor/"], src, { PATH, VITE_OPENPENCIL_CLOUD: "off" });
 
     const version = ((await Bun.file(join(src, "package.json")).json()) as { version?: string }).version ?? "";
     const next = `${DIST}.next`;

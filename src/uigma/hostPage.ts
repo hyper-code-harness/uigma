@@ -1,12 +1,12 @@
 /**
- * Renders the host page of one Uigma document — the page a canvas tab frames: it frames the editor (on its own
- * origin), hands it the file, saves every copy it hands back, relays the agent's requests to it and shows what the
+ * Renders the host page of one Uigma document — the page a canvas tab frames: it frames the editor (/uigma/editor/,
+ * served by Hyper under the editor's own CSP), hands it the file, saves every copy it hands back, relays the agent's requests to it and shows what the
  * person should know (opening, not installed, saving failed, changed elsewhere). Its script is /uigma/host.js; the
  * messages are those of the editor's bridge (editor/speca.patch, src/app/host/bridge.ts). No CDN.
  * @param opts.name Document name.
  * @param opts.type design or board.
  * @param opts.csrf CSRF token for the page's saves and replies.
- * @param opts.editorUrl The editor's address without theme (origin + hosted-mode query); empty: not installed.
+ * @param opts.editorUrl The editor's address without theme (/uigma/editor/ + hosted-mode query); empty: not installed.
  * @param opts.lang ru or en. @default en
  * @param opts.canEdit The person may change the document. @default true
  */

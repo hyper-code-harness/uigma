@@ -1,6 +1,7 @@
 /**
- * The host page of one Uigma document, framed by its canvas tab: the editor in a frame of its own origin, with the
- * file, saving and the agent's line (see uigma.hostPage). Not installed: a page that says how to install it.
+ * The host page of one Uigma document, framed by its canvas tab: the editor in a sandboxed frame on Hyper's own
+ * origin (/uigma/editor/), with the file, saving and the agent's line (see uigma.hostPage). Not installed: a page
+ * that says how to install it.
  * @param opts.req Incoming HTTP request.
  * @param opts.params Route parameters: the document name.
  */
@@ -14,13 +15,10 @@ export default async function (ctx: Context, session: Session | null, opts: {
     const status = await ctx.fns.uigma.editorStatus({});
     const cfg = await ctx.fns.uigma.config({});
     const lang = /^ru\b/i.test(opts.req.headers.get("accept-language") ?? "") ? "ru" : "en";
-    let editorUrl = "";
-    if (status.installed) {
-        const origin = await ctx.fns.uigma.editorOrigin({ req: opts.req });
-        // the editor's hosted mode (editor/speca.patch, src/app/host/flags.ts): `speca` turns it on — the flag keeps the
-        // name of the host it was written for, so one build serves both; the theme is added by the page itself
-        editorUrl = `${origin}/?speca=1&type=${doc.type}&lang=${lang}${cfg.online ? "&fonts=1" : ""}`;
-    }
+    // the editor's hosted mode (editor/speca.patch, src/app/host/flags.ts): `speca` turns it on — the flag keeps the
+    // name of the host it was written for, so one build serves both; the theme is added by the page itself. The
+    // address is relative: the editor is served by this very Hyper (the /uigma/editor middleware), on its origin.
+    const editorUrl = status.installed ? `/uigma/editor/?speca=1&type=${doc.type}&lang=${lang}${cfg.online ? "&fonts=1" : ""}` : "";
     const csrf = await ctx.fns.auth.csrfToken({ req: opts.req });
     const html = await ctx.fns.uigma.hostPage({ name, type: doc.type, csrf, editorUrl, lang, canEdit: true });
     return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "SAMEORIGIN", "referrer-policy": "no-referrer" } });

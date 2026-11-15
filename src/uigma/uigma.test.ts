@@ -13,7 +13,6 @@ import migration from "./$migration_20261110120000_uigma_docs";
 let ctx: Context;
 let tmp: string;
 const editorDir = () => join(tmp, "editor");
-const port = 47400 + Math.floor(Math.random() * 500);
 
 const TOOLS = [
     { name: "render", description: "Render JSX into the page. More words.", mutates: true, inputSchema: { $schema: "x", type: "object", properties: { jsx: { type: "string" }, x: { type: "number" } }, required: ["jsx"] } },
@@ -50,11 +49,10 @@ async function fakeEditor(name: string, answer: (command: string, args: any) => 
 
 beforeAll(async () => {
     tmp = await mkdtemp(join(tmpdir(), "uigma-test-"));
-    ctx = await testCtx({ env: { UIGMA_EDITOR_DIR: join(tmp, "editor"), UIGMA_DATA_DIR: join(tmp, "data"), UIGMA_EDITOR_PORT: String(port), HYPER_HOME: join(tmp, "home") } });
+    ctx = await testCtx({ env: { UIGMA_EDITOR_DIR: join(tmp, "editor"), UIGMA_DATA_DIR: join(tmp, "data"), HYPER_HOME: join(tmp, "home") } });
     await migration.up(ctx);
 });
 afterAll(async () => {
-    ctx?.fns.uigma.stopEditorServer({});
     await rm(tmp, { recursive: true, force: true });
 });
 
@@ -66,7 +64,6 @@ describe("the plugin is mounted", () => {
         expect(kinds["uigma.board"]).toBeTruthy();
         const cfg = await ctx.fns.uigma.config({});
         expect(cfg.editorDir).toBe(editorDir());
-        expect(cfg.port).toBe(port);
         expect(cfg.online).toBe(false);
     });
 });
@@ -173,18 +170,21 @@ describe("the editor", () => {
         expect(help).toContain("needs the setting uigma.online");
         expect(await ctx.fns.uigma.help({ tools: ["get_page_tree"] })).toContain("(reads only)");
 
-        const srv = await ctx.fns.uigma.editorServer({});
-        expect(srv.port).toBe(port);
-        const page = await fetch(`http://127.0.0.1:${port}/some/app/route`);
+        // the editor on Hyper's own origin: the /uigma/editor middleware, each answer under the editor's policy
+        const at = (path: string, init: Record<string, unknown> = {}) => ctx.fns.procs.http.dispatch({ url: `/uigma/editor${path}`, ...init });
+        const page = await at("/some/app/route");
         expect(page.status).toBe(200);
         expect(page.headers.get("content-security-policy")).toContain("connect-src 'self' data: blob:;");
+        expect(page.headers.get("content-security-policy")).toContain("frame-ancestors 'self'");
         expect(await page.text()).toContain("OpenPencil");
-        expect((await fetch(`http://127.0.0.1:${port}/assets/main-abc.js`)).headers.get("cache-control")).toContain("immutable");
-        expect((await fetch(`http://127.0.0.1:${port}/assets/missing.js`)).status).toBe(404);
-        expect((await fetch(`http://127.0.0.1:${port}/uigma.json`, { method: "POST" })).status).toBe(405);
+        expect((await at("/")).status).toBe(200);
+        expect((await at("/assets/main-abc.js")).headers.get("cache-control")).toContain("immutable");
+        expect((await at("/assets/missing.js")).status).toBe(404);
+        expect((await at("/../uigma.json")).status).toBe(404);
+        expect((await at("/uigma.json", { method: "POST" })).status).toBe(404);
 
         const tab = await (await ctx.fns.procs.http.dispatch({ url: "/uigma/tab/map", headers: { host: "localhost:3010" } })).text();
-        expect(tab).toContain(`data-editor="http://127.0.0.1:${port}/?speca=1&amp;type=board&amp;lang=en"`);
+        expect(tab).toContain(`data-editor="/uigma/editor/?speca=1&amp;type=board&amp;lang=en"`);
         expect(tab).toContain('<script src="/uigma/host.js"></script>');
         expect(tab).not.toMatch(/<(script|link)[^>]+(src|href)="https?:/);
     });

@@ -1,6 +1,6 @@
 // A design file in the Uigma editor (OpenPencil: Figma's model and shortcuts — pages, frames, auto layout,
 // components with instances and variants, variables, vectors, text), live in a canvas tab. The tab frames the
-// plugin's host page (/uigma/tab/<name>), which frames the editor on its own origin and keeps the file.
+// plugin's host page (/uigma/tab/<name>), which frames the editor (/uigma/editor/, Hyper's origin) and keeps the file.
 
 export const hint = "a Figma-like design file the person edits by hand — args `{ name }` (letters, digits, - and _; a new name starts an empty file; `from`: a .fig file to start from); the agent works in the same open file with uigma.run({ name, calls }) and looks with uigma.shot({ name }) — read the uigma SKILL first";
 

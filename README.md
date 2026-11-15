@@ -19,22 +19,25 @@ License, © Danila Poyarkov and OpenPencil contributors — see `LICENSE-OpenPen
 | agent API | `uigma.run`, `uigma.shot`, `uigma.help`, `uigma.list`, `uigma.read`, `uigma.authoring`, `uigma.editorStatus`, `uigma.installEditor` (plain documented functions — see the Functions tab of `/plugins/uigma`) |
 | routes | `/uigma` (documents, editor status), `/uigma/tab/:name` (the host page a tab frames), `/uigma/doc/:name`, `POST /uigma/save/:name`, `/uigma/bridge/:name` (SSE), `POST /uigma/reply/:name`, `/uigma/host.js` |
 | table | `uigma_docs` (`$migration_20261110120000_uigma_docs.ts`) |
-| settings | `uigma.editorDir`, `uigma.dataDir`, `uigma.editorPort`, `uigma.editorHost`, `uigma.editorUrl`, `uigma.online` |
+| settings | `uigma.editorDir`, `uigma.dataDir`, `uigma.online` |
 | editor | `editor/build.ts` (build), `editor/speca.patch`, `editor/dump-tools.ts`, `editor/pack.ts` (release archive), `editor/release.json` (pinned archive) |
 
 How it fits together:
 
 ```
 canvas tab (Hyper page) ─iframe→ /uigma/tab/<name>  (host page, Hyper origin: CSRF, file, saves)
-                                   └─iframe→ http://127.0.0.1:47320/?speca=1&type=…  (editor, its own origin)
+                                   └─iframe→ /uigma/editor/?speca=1&type=…  (the editor build, Hyper's origin, own CSP)
 agent: uigma.run ─→ hub (ctx.state.uigma) ─SSE /uigma/bridge→ host page ─postMessage→ editor
                     ←────────── POST /uigma/reply ←──────────── host page ←─────────── result
 editor ─postMessage {save}→ host page ─POST /uigma/save?base=rev→ <dataDir>/docs/<name>/<rev>.fig + uigma_docs
 ```
 
-The editor's page is served by the plugin's own static server on another origin than Hyper's, with a CSP that gives
-it no network (fonts and icons only with `uigma.online`): it holds no Hyper session and gets the file only from the
-host page by `postMessage`. The host protocol is the patch's, unchanged (`src/app/host/bridge.ts` in the patch):
+The editor is a static build (OpenPencil with `--base /uigma/editor/`) that Hyper itself serves under
+`/uigma/editor/*` (`$middleware_editor.ts`: any depth, every answer under the editor's own CSP — no network beyond
+Hyper's origin, fonts and icons only with `uigma.online`, `frame-ancestors 'self'`). Same origin as Hyper, so the
+editor inherits the page's https secure context (its saves hash with `crypto.subtle`) and needs no second port,
+proxy or firewall rule; it still gets the file only from the host page by `postMessage` and calls no Hyper API
+itself — writes go through the host page with its CSRF token. The host protocol is the patch's, unchanged (`src/app/host/bridge.ts` in the patch):
 
 ```
 host → editor   {uigma:'init', doc, name, type, canEdit, theme} · {uigma:'call', id, command, args} · {uigma:'cancel', id}
@@ -70,8 +73,7 @@ await ctx.fns.uigma.installEditor({ mode: "copy", from: "/path/to/build" })
 ```
 
 By hand: `bun editor/build.ts --out ~/.hyper/uigma/editor`. Until the editor is there a Uigma tab says so and how to
-install it. Hyper on another machine than the browser: put the editor port behind a reverse proxy on its own host
-name and set `uigma.editorUrl` (https when Hyper is https); `uigma.editorHost` sets the listen address.
+install it. A browser anywhere Hyper is reachable can open it: the editor comes from Hyper's own address.
 
 ## Listing
 
@@ -116,8 +118,6 @@ locally (gitignored).
   the conflict choice ("open the fresh version" / "save mine over it") — there is no real-time co-editing.
 - Every signed-in person may open and change every document (as with Excalidraw drawings); there is no per-document
   sharing or view-only role, and no saved-version view of a tab (Speca's "past revision" view is dropped).
-- The editor's own server is reached directly by the browser: by default only a browser on the Hyper machine;
-  otherwise a reverse proxy and `uigma.editorUrl`.
 - Documents up to 96 MB; the last 30 revisions are kept on disk.
 - Dropped from the Speca plugin: per-user file storage and the person's Files (pictures go by path; screenshots are
   files under `<dataDir>/shots`), audit events, the preview-proxy tickets, the authoring skill's generation at build

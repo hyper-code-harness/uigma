@@ -2,8 +2,9 @@
  * Builds the Content-Security-Policy the editor's page and workers are served with: its own files, WebAssembly
  * and workers, and no network beyond its own origin — with `online`, the font and icon catalogues only.
  *
- * Use when serving the editor (uigma.editorServer does); the document itself never travels over the editor's
- * own requests, only through the host page's postMessage.
+ * Use when serving the editor (the /uigma/editor middleware does); the document itself never travels over the
+ * editor's own requests, only through the host page's postMessage. The editor shares Hyper's origin, so the policy
+ * also keeps it framed by Hyper's pages only and lets it submit nothing.
  * @param opts.online Allow the font catalogues and the Iconify icon API. @default false
  */
 export default function (_ctx: Context, _session: Session | null, opts: {
@@ -25,5 +26,6 @@ export default function (_ctx: Context, _session: Session | null, opts: {
         "object-src 'none'",
         "base-uri 'self'",
         "form-action 'none'",
+        "frame-ancestors 'self'",
     ].join("; ");
 }

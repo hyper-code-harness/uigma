@@ -1,6 +1,7 @@
-// Uigma's host page script (/uigma/host.js). The editor runs in a frame on an origin of its own and has no way into
-// Hyper; this page — Hyper's — fetches the file for it, saves every copy it hands back, and relays what an agent
-// asks of it. The messages are listed in the editor's bridge (editor/speca.patch, src/app/host/bridge.ts):
+// Uigma's host page script (/uigma/host.js). The editor runs in a sandboxed frame on Hyper's origin (/uigma/editor/,
+// under its own CSP) and talks to Hyper only through this page: it fetches the file for the editor, saves every
+// copy it hands back, and relays what an agent asks of it. The messages are listed in the editor's bridge
+// (editor/speca.patch, src/app/host/bridge.ts):
 //   host → editor   {uigma:'init', doc, name, type, canEdit, theme} · {uigma:'call', id, command, args}
 //                   {uigma:'cancel', id} · {uigma:'flush'} · {uigma:'theme', theme}
 //   editor → host   {uigma:'ready'} · {uigma:'loaded', summary} · {uigma:'dirty'} · {uigma:'clean'}
@@ -38,7 +39,7 @@
     const mine = ++turn;
     loaded = false; editorDirty = false; delete root.dataset.ready; closeBridge(); clearTimeout(readyT);
     show(W.opening);
-    const url = new URL(base);
+    const url = new URL(base, location.href);     // relative: the editor on this very origin (/uigma/editor/)
     url.searchParams.set("theme", theme);
     origin = url.origin;
     frame.hidden = false;

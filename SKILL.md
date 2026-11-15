@@ -21,8 +21,8 @@ builds code that runs in their browser):
   Rust; a few minutes in the background — poll `uigma.editorStatus({})`, its `install.log`);
 - `{ mode: "copy", from: "<dir>" }` — an existing build. Or point the setting `uigma.editorDir` at one.
 
-The editor is served by the plugin on an origin of its own (`uigma.editorPort`, default 47320) and framed by the
-tab's host page; behind a reverse proxy set `uigma.editorUrl`. An open tab picks up a new build after a reload.
+The editor is served by Hyper itself under `/uigma/editor/` (its own CSP, Hyper's origin) and framed by the tab's
+host page. An open tab picks up a new build after a reload.
 
 ## The working order
 

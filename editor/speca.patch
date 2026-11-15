@@ -1837,6 +1837,20 @@ index 5fa6233..15de0f7 100644
    if (!(await runSupportGate())) return
    try {
      // A Cloud server's root welcomes visitors who are not signed in before loading the editor.
+diff --git a/src/router.ts b/src/router.ts
+index 9799720..d6be2f6 100644
+--- a/src/router.ts
++++ b/src/router.ts
+@@ -5,7 +5,8 @@ import { homeLocation } from '@/app/home/location'
+ import WorkspaceView from './views/WorkspaceView.vue'
+ 
+ const router = createRouter({
+-  history: createWebHistory(),
++  // The app may be served below a path (a host serves it at /uigma/editor/): the router starts there.
++  history: createWebHistory(import.meta.env.BASE_URL),
+   routes: [
+     { path: '/', component: WorkspaceView },
+     {
 diff --git a/src/views/WorkspaceView.vue b/src/views/WorkspaceView.vue
 index 8870070..3b5d196 100644
 --- a/src/views/WorkspaceView.vue

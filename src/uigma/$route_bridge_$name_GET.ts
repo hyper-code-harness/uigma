@@ -18,7 +18,8 @@ export default async function (ctx: Context, session: Session | null, opts: {
         async start(ctrl) {
             const sse = (type: string, data: unknown) => ctrl.enqueue(enc.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`));
             ping = setInterval(() => { try { ctrl.enqueue(enc.encode(": ping\n\n")); } catch { clearInterval(ping); } }, 20_000);
-            leave = await ctx.fns.uigma.hubJoin({ name, userId: (session as any)?.user?.id ?? null, send: sse });
+            const userId = (session as any)?.user?.id ?? null;
+            leave = await ctx.fns.uigma.hubJoin({ name, userId, studio: userId === "uigma-studio", send: sse });
             sse("hello", {});
             opts.req.signal.addEventListener("abort", () => { clearInterval(ping); leave?.(); try { ctrl.close(); } catch { /* closed */ } });
         },

@@ -22,7 +22,7 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     timeoutMs?: number;
 }): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
     const a = await ctx.fns.uigma.hubAsk({ name: opts.name, command: opts.command, args: opts.args ?? {}, waitMs: opts.waitMs ?? 0, timeoutMs: opts.timeoutMs ?? 90_000 });
-    if (a.offline) return { ok: false, error: `The document "${opts.name}" is not open in the person's browser, and the editor works only in an open tab (its tab was put on the canvas). If the person is not at Hyper now, tell them — do not retry in a loop.` };
+    if (a.offline) return { ok: false, error: `The document "${opts.name}" is not open anywhere: the studio (Hyper's headless Chrome, setting uigma.studio) could not open it and no person has its tab (it was put on their canvas). uigma.studioStatus({}) says why; if the person is not at Hyper now, tell them — do not retry in a loop.` };
     if (!a.ok) return { ok: false, error: a.error ?? "the editor failed" };
     const env = a.result as { ok?: unknown; result?: unknown; error?: unknown } | null;
     if (!env || env.ok !== true) return { ok: false, error: String(env?.error ?? "the editor gave no answer") };

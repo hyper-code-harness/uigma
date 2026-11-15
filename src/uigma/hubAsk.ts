@@ -1,7 +1,8 @@
 /**
  * Asks the open editor of a document to run one command of its automation ("tool" {name, args, agent}, "summary",
- * "undo", "redo", "eval", "export"…) and waits for its answer. Goes to the newest open editor of that document;
- * with none open it waits `waitMs` for one to connect, then answers {ok: false, error}.
+ * "undo", "redo", "eval", "export"…) and waits for its answer. Goes to the newest open editor of that document —
+ * a person's tab before the studio's page, so the person sees the agent's work; with none open it waits `waitMs`
+ * for one to connect, then answers {ok: false, error}.
  *
  * Use through uigma.run and uigma.shot; call directly only for a command they do not cover.
  * @param opts.name Document name.
@@ -23,7 +24,11 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     timeoutMs?: number;
 }): Promise<{ ok: boolean; result?: unknown; error?: string; offline?: boolean }> {
     const hub = await ctx.fns.uigma.hub({});
-    const pick = () => { let found = null; for (const c of hub.clients.values()) if (c.name === opts.name) found = c; return found as null | { id: string; send: (e: string, d: unknown) => void }; };
+    const pick = () => {
+        let found: null | { id: string; studio: boolean; send: (e: string, d: unknown) => void } = null;
+        for (const c of hub.clients.values()) if (c.name === opts.name && (!found || found.studio || !c.studio)) found = c;
+        return found;
+    };
     let client = pick();
     if (!client && (opts.waitMs ?? 0) > 0) {
         client = await new Promise(resolve => {

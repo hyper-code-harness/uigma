@@ -45,12 +45,15 @@ host page. An open tab picks up a new build after a reload.
 stay; `undo` takes back the agent's newest change and never the person's). `page: "<name or id>"` works on another
 page without moving the person. Arguments are checked by the editor: e.g. `delete_node` takes one `id`.
 
-## The editor works only while it is open
+## The editor works only while it is open — the studio opens it for you
 
-uigma.run and uigma.shot talk to the editor in the person's browser (a live page: WebAssembly + the file). When the
-document is not open, its tab is put on the current agent's canvas and the call waits up to 30 s for it; if nobody is
-at Hyper the call answers "not open" — tell the person, do not retry in a loop. Never write a document's bytes
-yourself; change it through uigma.run so the person's open copy and yours stay one.
+uigma.run and uigma.shot talk to a live editor page (WebAssembly + the file). A person's open tab comes first — they
+see your work as it happens. When nobody has the document open, the studio (Hyper's own headless Chrome, setting
+`uigma.studio`) opens it for you within a few seconds, saves like a tab would and renders pictures; it closes its
+page as soon as a person opens the same document. With the studio off or broken (`uigma.studioStatus({})` says), the
+tab is put on the current agent's canvas and the call waits up to 30 s for it; if nobody is at Hyper the call
+answers "not open" — tell the person, do not retry in a loop. Never write a document's bytes yourself; change it
+through uigma.run so every open copy stays one.
 
 ## Components and variables
 

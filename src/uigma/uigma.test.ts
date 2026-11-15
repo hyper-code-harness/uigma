@@ -49,7 +49,7 @@ async function fakeEditor(name: string, answer: (command: string, args: any) => 
 
 beforeAll(async () => {
     tmp = await mkdtemp(join(tmpdir(), "uigma-test-"));
-    ctx = await testCtx({ env: { UIGMA_EDITOR_DIR: join(tmp, "editor"), UIGMA_DATA_DIR: join(tmp, "data"), HYPER_HOME: join(tmp, "home") } });
+    ctx = await testCtx({ env: { UIGMA_EDITOR_DIR: join(tmp, "editor"), UIGMA_DATA_DIR: join(tmp, "data"), UIGMA_STUDIO: "false", HYPER_HOME: join(tmp, "home") } });
     await migration.up(ctx);
 });
 afterAll(async () => {
@@ -65,6 +65,7 @@ describe("the plugin is mounted", () => {
         const cfg = await ctx.fns.uigma.config({});
         expect(cfg.editorDir).toBe(editorDir());
         expect(cfg.online).toBe(false);
+        expect(cfg.studio).toBe(false);
     });
 });
 
@@ -267,5 +268,21 @@ describe("an agent's calls reach the open editor", () => {
         expect(await ctx.fns.uigma.hubAnswer({ name: "other", id: "x", ok: true })).toBe(false);
         const none = await ctx.fns.uigma.hubAsk({ name: "map", command: "summary" });
         expect(none.offline).toBe(true);
+    });
+
+    test("a person's editor is preferred over the studio's; the studio is off here", async () => {
+        const seen: string[] = [];
+        const studio = await ctx.fns.uigma.hubJoin({ name: "map", userId: "uigma-studio", studio: true, send: (_e, d: any) => { seen.push("studio"); queueMicrotask(() => ctx.fns.uigma.hubAnswer({ name: "map", id: d.id, ok: true, result: { ok: true, result: 1 } })); } });
+        const person = await ctx.fns.uigma.hubJoin({ name: "map", userId: "ann", send: (_e, d: any) => { seen.push("person"); queueMicrotask(() => ctx.fns.uigma.hubAnswer({ name: "map", id: d.id, ok: true, result: { ok: true, result: 2 } })); } });
+        try {
+            expect((await ctx.fns.uigma.hubAsk({ name: "map", command: "summary" })).result).toEqual({ ok: true, result: 2 });
+            person();
+            expect((await ctx.fns.uigma.hubAsk({ name: "map", command: "summary" })).result).toEqual({ ok: true, result: 1 });
+            expect(seen).toEqual(["person", "studio"]);
+            const st = await ctx.fns.uigma.studioStatus({});
+            expect(st.enabled).toBe(false);
+            expect(st.editors).toEqual([{ name: "map", userId: "uigma-studio", studio: true }]);
+            expect((await ctx.fns.uigma.studio({ name: "map" })).ok).toBe(false);
+        } finally { studio(); }
     });
 });

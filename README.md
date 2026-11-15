@@ -19,7 +19,7 @@ License, © Danila Poyarkov and OpenPencil contributors — see `LICENSE-OpenPen
 | agent API | `uigma.run`, `uigma.shot`, `uigma.help`, `uigma.list`, `uigma.read`, `uigma.authoring`, `uigma.editorStatus`, `uigma.installEditor` (plain documented functions — see the Functions tab of `/plugins/uigma`) |
 | routes | `/uigma` (documents, editor status), `/uigma/tab/:name` (the host page a tab frames), `/uigma/doc/:name`, `POST /uigma/save/:name`, `/uigma/bridge/:name` (SSE), `POST /uigma/reply/:name`, `/uigma/host.js` |
 | table | `uigma_docs` (`$migration_20261110120000_uigma_docs.ts`) |
-| settings | `uigma.editorDir`, `uigma.dataDir`, `uigma.online` |
+| settings | `uigma.editorDir`, `uigma.dataDir`, `uigma.online`, `uigma.studio`, `uigma.studioPort` |
 | editor | `editor/build.ts` (build), `editor/speca.patch`, `editor/dump-tools.ts`, `editor/pack.ts` (release archive), `editor/release.json` (pinned archive) |
 
 How it fits together:
@@ -110,10 +110,21 @@ a sha256 check. The real editor was checked by hand in a throwaway Hyper (a boar
 `uigma.run`, saved as revision 2 with 21 layers, `uigma.shot` returned a 1600×925 PNG); `.shots/` keeps such pictures
 locally (gitignored).
 
+## The studio
+
+The editor is a live page, so somebody's browser has to hold a document open for an agent to draw in it. When no
+person has its tab, the plugin opens the host page itself in **Hyper's own headless Chrome** — the studio: a hyperd
+service unit `uigma-studio` the plugin writes to `~/.hyper/units/` and starts on first use (`uigma.studio`,
+`uigma.studioPort`, default 39017; SwiftShader, so `uigma.shot` renders without a GPU). It signs in as the service
+user `uigma-studio` with a one-day session minted in-process, opens one page per document and keeps it until
+`uigma.studioClose({ name })` or a person opens the same document — then the studio's page is closed and the
+person's editor is the one that saves and answers. `uigma.studioStatus({})` says what it holds and which editors
+the hub sees. Tests run with `UIGMA_STUDIO=false`.
+
 ## Limits
 
-- The editor works only while a tab of the document is open in someone's browser (it is a live page); agents' calls
-  wait 30 s for it, then answer "not open".
+- With the studio off, the editor works only while a tab of the document is open in someone's browser; agents'
+  calls wait 30 s for it, then answer "not open".
 - One editor answers for a document: the newest open, editable one. Two people editing the same document at once get
   the conflict choice ("open the fresh version" / "save mine over it") — there is no real-time co-editing.
 - Every signed-in person may open and change every document (as with Excalidraw drawings); there is no per-document

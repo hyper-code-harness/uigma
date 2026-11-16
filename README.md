@@ -89,13 +89,22 @@ install it. A browser anywhere Hyper is reachable can open it: the editor comes 
 }
 ```
 
+## Installing
+
+`plugins.install({ name: "uigma" })` from the listing (or `plugins.install({ source: "github:hyper-code-harness/uigma" })`),
+then open any Uigma tab: the first tab (or the first agent call) downloads the prebuilt editor pinned in
+`editor/release.json` — a ~14 MB `.tgz` asset of this repository's GitHub release, sha256 checked — into
+`uigma.editorDir` (`uigma.ensureEditor({})` does the same ahead of time). No Rust, no build. Without internet:
+`uigma.installEditor({ mode: "copy", from })` with a build from another machine, or `{ mode: "build" }` (git + cargo).
+
 ## Releasing
 
-1. Bump `version` in `package.json`, commit, `git tag vX.Y.Z`, push the tag.
+1. Bump `version` in `package.json`, commit, `git tag vX.Y.Z`, push the tag (`plugins.release({ name: "uigma" })`).
 2. The editor archive (when the pinned commit or the patch changed, or for the first release):
    `bun editor/build.ts --out .editor && bun editor/pack.ts .editor uigma-editor-<version>.tgz <asset url>`;
-   attach the `.tgz` to the GitHub release of the tag, put the printed `url` and `sha256` into `editor/release.json`,
-   commit and tag again (a patch release). `installEditor({})` then downloads exactly that archive.
+   attach the `.tgz` to the GitHub release of the tag (`gh release create vX.Y.Z uigma-editor-<version>.tgz`), put
+   the printed `url` and `sha256` into `editor/release.json`, commit and tag again (a patch release).
+   `ensureEditor` / `installEditor({})` then download exactly that archive.
 
 ## Tests
 

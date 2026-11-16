@@ -10,8 +10,8 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     /** Document name. */
     name: string;
 }): Promise<{ doc: types.uigma.Doc; waitMs: number; studioError?: string } | { error: string }> {
-    const status = await ctx.fns.uigma.editorStatus({});
-    if (!status.installed) return { error: `The Uigma editor is not installed (${status.dir}). ${status.howToInstall}` };
+    const ready = await ctx.fns.uigma.ensureEditor({});
+    if (!ready.installed) return { error: `The Uigma editor is not installed (${(await ctx.fns.uigma.editorStatus({})).dir}): ${ready.error}` };
     const doc = await ctx.fns.uigma.getDoc({ name: opts.name });
     if (!doc) return { error: `No Uigma document "${opts.name}". Open one first: await ctx.fns.canvas.show({ kind: "uigma.file", args: { name: "${opts.name}" } }) (a board: kind "uigma.board"); uigma.list({}) lists them.` };
     if (await ctx.fns.uigma.hubOnline({ name: doc.name })) return { doc, waitMs: 0 };

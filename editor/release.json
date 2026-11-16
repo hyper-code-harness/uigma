@@ -1,7 +1,7 @@
 {
-  "comment": "The prebuilt editor that uigma.installEditor({}) downloads: an asset of a GitHub release of this repository. Empty until the first release carries one — fill url and sha256 from `bun editor/pack.ts` (see README, Releasing).",
-  "url": "",
-  "sha256": "",
+  "comment": "The prebuilt editor that uigma.installEditor({}) / uigma.ensureEditor({}) download on first use: an asset of a GitHub release of this repository. Refresh url and sha256 from `bun editor/pack.ts` when the editor changes (see README, Releasing).",
+  "url": "https://github.com/hyper-code-harness/uigma/releases/download/v0.2.0/uigma-editor-0.2.0.tgz",
+  "sha256": "a0521a687b1c81d82e0425efb2702550a2db7ac3e9b29d9adf74e6188ecaaa59",
   "version": "0.17.0-beta.2",
   "commit": "cabbffd06c192ecfaaab3951994fb2424f3bc326"
 }

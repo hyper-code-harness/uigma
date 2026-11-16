@@ -23,6 +23,8 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     lang?: string;
     /** The person may change the document. @default true */
     canEdit?: boolean;
+    /** Why the editor could not be installed just now (shown with the "not installed" message). */
+    installError?: string;
 }): Promise<string> {
     const esc = (text: unknown) => ctx.fns.w.escape({ text });
     const ru = opts.lang === "ru";
@@ -43,6 +45,7 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     };
     const words = JSON.stringify(W).replace(/</g, "\\u003c");
     const missing = !opts.editorUrl;
+    const why = missing && opts.installError ? ` (${opts.installError})` : "";
     return `<!doctype html>
 <html lang="${ru ? "ru" : "en"}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -66,7 +69,7 @@ export default async function (ctx: Context, _session: Session | null, opts: {
 <div class="uigma" data-name="${esc(opts.name)}" data-type="${opts.type === "board" ? "board" : "design"}" data-csrf="${esc(opts.csrf)}" data-editor="${esc(opts.editorUrl)}" data-can-edit="${opts.canEdit === false ? "false" : "true"}">
   <iframe class="uigma-frame" title="Uigma" allow="clipboard-read; clipboard-write; local-fonts; fullscreen"${missing ? " hidden" : ""}></iframe>
   <div class="uigma-over">
-    <p class="uigma-msg" role="status">${esc(missing ? W.missing : W.opening)}</p>
+    <p class="uigma-msg" role="status">${esc(missing ? W.missing + why : W.opening)}</p>
     <div class="uigma-acts">
       <button type="button" data-act="retry" hidden>${esc(W.retry)}</button>
       <button type="button" data-act="reload" hidden>${esc(W.reload)}</button>

@@ -197,15 +197,13 @@ describe("the editor", () => {
         expect(await Bun.spawn(["tar", "-czf", tgz, "-C", build, "."]).exited).toBe(0);
         const bytes = await Bun.file(tgz).arrayBuffer();
         const sha = new Bun.CryptoHasher("sha256").update(new Uint8Array(bytes)).digest("hex");
-        const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(bytes) });
-        try {
-            const url = `http://127.0.0.1:${server.port}/editor.tgz`;
-            await expect(ctx.fns.uigma.installEditor({ mode: "download", url, sha256: "0".repeat(64) })).rejects.toThrow(/sha256/);
-            expect((await ctx.fns.uigma.editorStatus({})).version).toBe("9.9.9");
-            const r = await ctx.fns.uigma.installEditor({ mode: "download", url, sha256: sha });
-            expect(r.version).toBe("1.2.3");
-            expect(existsSync(join(editorDir(), "index.html"))).toBe(true);
-        } finally { server.stop(true); }
+        // a file: address — a loopback server would need a port a strict firewall may not allow
+        const url = Bun.pathToFileURL(tgz).href;
+        await expect(ctx.fns.uigma.installEditor({ mode: "download", url, sha256: "0".repeat(64) })).rejects.toThrow(/sha256/);
+        expect((await ctx.fns.uigma.editorStatus({})).version).toBe("9.9.9");
+        const r = await ctx.fns.uigma.installEditor({ mode: "download", url, sha256: sha });
+        expect(r.version).toBe("1.2.3");
+        expect(existsSync(join(editorDir(), "index.html"))).toBe(true);
     });
 });
 

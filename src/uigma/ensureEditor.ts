@@ -1,13 +1,16 @@
 /**
  * Makes sure the Uigma editor build is installed before a tab or an agent's call needs it: when it is missing and
  * editor/release.json pins a prebuilt archive, downloads it (sha256 checked, ~14 MB, one download at a time —
- * concurrent callers share it); without a pinned archive answers how to install instead of building on its own.
+ * concurrent callers share it); without a pinned archive, or with uigma.autoInstall off, answers how to install
+ * instead of building on its own.
  *
  * Use from uigma.reach and the tab page; call directly to warm a fresh install.
  */
 export default async function (ctx: Context, _session: Session | null, _opts: {}): Promise<{ installed: boolean; version?: string; fetched: boolean; error?: string }> {
     const status = await ctx.fns.uigma.editorStatus({});
     if (status.installed) return { installed: true, version: status.version, fetched: false };
+    const cfg = await ctx.fns.uigma.config({});
+    if (!cfg.autoInstall) return { installed: false, fetched: false, error: `the editor is not downloaded by itself (setting uigma.autoInstall is off). ${status.howToInstall}` };
     const state = ((ctx.state as any).uigma ??= {}) as types.uigma.State & { ensuring?: Promise<{ installed: boolean; version?: string; fetched: boolean; error?: string }> };
     if (state.ensuring) return state.ensuring;
     const { resolve } = await import("node:path");

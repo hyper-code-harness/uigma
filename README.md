@@ -19,7 +19,7 @@ License, © Danila Poyarkov and OpenPencil contributors — see `LICENSE-OpenPen
 | agent API | `uigma.run`, `uigma.shot`, `uigma.help`, `uigma.list`, `uigma.read`, `uigma.authoring`, `uigma.editorStatus`, `uigma.installEditor` (plain documented functions — see the Functions tab of `/plugins/uigma`) |
 | routes | `/uigma` (documents, editor status), `/uigma/tab/:name` (the host page a tab frames), `/uigma/doc/:name`, `POST /uigma/save/:name`, `/uigma/bridge/:name` (SSE), `POST /uigma/reply/:name`, `/uigma/host.js` |
 | table | `uigma_docs` (`$migration_20261110120000_uigma_docs.ts`) |
-| settings | `uigma.editorDir`, `uigma.dataDir`, `uigma.online`, `uigma.studio`, `uigma.studioPort` |
+| settings | `uigma.editorDir`, `uigma.dataDir`, `uigma.online`, `uigma.autoInstall`, `uigma.studio`, `uigma.studioPort` |
 | editor | `editor/build.ts` (build), `editor/speca.patch`, `editor/dump-tools.ts`, `editor/pack.ts` (release archive), `editor/release.json` (pinned archive) |
 
 How it fits together:
@@ -94,7 +94,7 @@ install it. A browser anywhere Hyper is reachable can open it: the editor comes 
 `plugins.install({ name: "uigma" })` from the listing (or `plugins.install({ source: "github:hyper-code-harness/uigma" })`),
 then open any Uigma tab: the first tab (or the first agent call) downloads the prebuilt editor pinned in
 `editor/release.json` — a ~14 MB `.tgz` asset of this repository's GitHub release, sha256 checked — into
-`uigma.editorDir` (`uigma.ensureEditor({})` does the same ahead of time). No Rust, no build. Without internet:
+`uigma.editorDir` (`uigma.ensureEditor({})` does the same ahead of time; `uigma.autoInstall` off turns it off). No Rust, no build. Without internet:
 `uigma.installEditor({ mode: "copy", from })` with a build from another machine, or `{ mode: "build" }` (git + cargo).
 
 ## Releasing

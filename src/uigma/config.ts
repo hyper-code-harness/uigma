@@ -5,7 +5,7 @@
  * Use before touching the editor folder or the documents; every other uigma function reads its paths here.
  */
 export default async function (ctx: Context, _session: Session | null, _opts: {}): Promise<{
-    editorDir: string; dataDir: string; online: boolean; studio: boolean; studioPort: number;
+    editorDir: string; dataDir: string; online: boolean; autoInstall: boolean; studio: boolean; studioPort: number;
 }> {
     const { join, resolve } = await import("node:path");
     const get = (key: string) => ctx.fns.settings.get({ module: "uigma", scopeType: "global", key });
@@ -21,6 +21,7 @@ export default async function (ctx: Context, _session: Session | null, _opts: {}
         editorDir: path(await get("editorDir"), join(home, "uigma", "editor")),
         dataDir,
         online: (await get("online")) === true,
+        autoInstall: (await get("autoInstall")) !== false,
         studio: (await get("studio")) !== false,
         studioPort: (() => { const p = Math.round(Number(studioPort) || 39017); return p >= 1024 && p <= 65535 ? p : 39017; })(),
     };

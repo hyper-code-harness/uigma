@@ -49,7 +49,7 @@ async function fakeEditor(name: string, answer: (command: string, args: any) => 
 
 beforeAll(async () => {
     tmp = await mkdtemp(join(tmpdir(), "uigma-test-"));
-    ctx = await testCtx({ env: { UIGMA_EDITOR_DIR: join(tmp, "editor"), UIGMA_DATA_DIR: join(tmp, "data"), UIGMA_STUDIO: "false", HYPER_HOME: join(tmp, "home") } });
+    ctx = await testCtx({ env: { UIGMA_EDITOR_DIR: join(tmp, "editor"), UIGMA_DATA_DIR: join(tmp, "data"), UIGMA_STUDIO: "false", UIGMA_AUTO_INSTALL: "false", HYPER_HOME: join(tmp, "home") } });
     await migration.up(ctx);
 });
 afterAll(async () => {
@@ -66,6 +66,8 @@ describe("the plugin is mounted", () => {
         expect(cfg.editorDir).toBe(editorDir());
         expect(cfg.online).toBe(false);
         expect(cfg.studio).toBe(false);
+        expect(cfg.autoInstall).toBe(false);
+        expect((await ctx.fns.uigma.ensureEditor({})).error).toContain("autoInstall");
     });
 });
 

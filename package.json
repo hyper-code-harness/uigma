@@ -1,6 +1,6 @@
 {
   "name": "uigma",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "A Figma-like design editor and FigJam-like boards on the Hyper canvas, built on OpenPencil (MIT).",

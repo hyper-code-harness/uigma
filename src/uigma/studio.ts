@@ -28,8 +28,10 @@ export default async function (ctx: Context, _session: Session | null, opts: {
     const doc = await ctx.fns.uigma.getDoc({ name });
     if (!doc) return { ok: false, error: `no document "${name}"` };
 
-    // one page per document: still there and still on the host page → reuse it
+    // a person's editor already holds the document: nothing for the studio to do (hubJoin closes its page then)
     const known = studio.pages.get(name);
+    if (!known && await ctx.fns.uigma.hubOnline({ name })) return { ok: false, error: "the document is open in a person's tab; the studio stays out" };
+    // one page per document: still there and still on the host page → reuse it
     if (known) {
         const alive = await cdpTargets(cfg.studioPort).then(ts => ts.some(t => t.id === known.targetId && t.url.includes(`/uigma/tab/${encodeURIComponent(name)}`))).catch(() => false);
         if (alive && await ctx.fns.uigma.hubOnline({ name })) return { ok: true, targetId: known.targetId, reused: true };
